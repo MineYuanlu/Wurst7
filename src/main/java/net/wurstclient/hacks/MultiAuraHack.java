@@ -253,6 +253,7 @@ public final class MultiAuraHack extends Hack implements UpdateListener
 		WURST.getHax().autoSwordHack.setSlot();
 		
 		// attack entities
+		WurstClient.INSTANCE.getCmds().baritoneCmd.Pause();
 		for(Entity entity : entities)
 		{
 			RotationUtils.Rotation rotations = RotationUtils

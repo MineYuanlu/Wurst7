@@ -29,6 +29,7 @@ import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.wurstclient.Category;
 import net.wurstclient.SearchTags;
+import net.wurstclient.WurstClient;
 import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hack.Hack;
 import net.wurstclient.settings.CheckboxSetting;
@@ -112,6 +113,7 @@ public final class AutoEatHack extends Hack implements UpdateListener
 		MC.player.getInventory().selectedSlot = bestSlot;
 		
 		// eat food
+		WurstClient.INSTANCE.getCmds().baritoneCmd.Pause();
 		MC.options.keyUse.setPressed(true);
 		IMC.getInteractionManager().rightClickItem();
 	}

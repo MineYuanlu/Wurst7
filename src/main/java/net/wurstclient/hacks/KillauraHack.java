@@ -41,6 +41,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.wurstclient.Category;
 import net.wurstclient.SearchTags;
+import net.wurstclient.WurstClient;
 import net.wurstclient.events.PostMotionListener;
 import net.wurstclient.events.RenderListener;
 import net.wurstclient.events.UpdateListener;
@@ -284,6 +285,7 @@ public final class KillauraHack extends Hack
 		if(target == null)
 			return;
 		
+		WurstClient.INSTANCE.getCmds().baritoneCmd.Pause();
 		WURST.getHax().criticalsHack.doCritical();
 		ClientPlayerEntity player = MC.player;
 		MC.interactionManager.attackEntity(player, target);

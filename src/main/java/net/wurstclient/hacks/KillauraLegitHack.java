@@ -42,6 +42,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.wurstclient.Category;
+import net.wurstclient.WurstClient;
 import net.wurstclient.events.RenderListener;
 import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hack.Hack;
@@ -256,6 +257,7 @@ public final class KillauraLegitHack extends Hack
 			return;
 		
 		// attack entity
+		WurstClient.INSTANCE.getCmds().baritoneCmd.Pause();
 		WURST.getHax().criticalsHack.doCritical();
 		MC.interactionManager.attackEntity(player, target);
 		player.swingHand(Hand.MAIN_HAND);

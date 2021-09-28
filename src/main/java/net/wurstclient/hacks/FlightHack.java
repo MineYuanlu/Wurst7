@@ -16,6 +16,7 @@ import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hack.Hack;
 import net.wurstclient.settings.SliderSetting;
 import net.wurstclient.settings.SliderSetting.ValueDisplay;
+import net.wurstclient.settings.CheckboxSetting;
 
 @SearchTags({"FlyHack", "fly hack", "flying"})
 public final class FlightHack extends Hack
@@ -23,12 +24,18 @@ public final class FlightHack extends Hack
 {
 	public final SliderSetting speed =
 		new SliderSetting("Speed", 1, 0.05, 5, 0.05, ValueDisplay.DECIMAL);
-	
+	private final CheckboxSetting antikick =
+		new CheckboxSetting("Anti kick", "Makes you fall a little bit every second.", false);
+	private final SliderSetting antikickintv =
+		new SliderSetting("Anti kick interval", 30, 5, 100, 1.0, ValueDisplay.INTEGER);
+
 	public FlightHack()
 	{
 		super("Flight");
 		setCategory(Category.MOVEMENT);
 		addSetting(speed);
+		addSetting(antikick);
+		addSetting(antikickintv);
 	}
 	
 	@Override
@@ -48,6 +55,25 @@ public final class FlightHack extends Hack
 		EVENTS.remove(IsPlayerInWaterListener.class, this);
 	}
 	
+	private enum ssdvAction {
+		UP,
+		DOWN,
+		NULL;
+	}
+	private int ssdvcounter = 0;
+	private ssdvAction shouldSetDownwardsVelocity()
+	{
+		int ssdvinterval = antikickintv.getValueI();
+		if (!antikick.isChecked()) return ssdvAction.NULL;
+		if (ssdvcounter >= ssdvinterval) {
+			ssdvcounter = 0;
+		}
+		else {
+			ssdvcounter++;
+		}
+		return ssdvcounter == 0 ? ssdvAction.DOWN : (ssdvcounter == ssdvinterval ? ssdvAction.UP : ssdvAction.NULL);
+	}
+
 	@Override
 	public void onUpdate()
 	{
@@ -57,13 +83,21 @@ public final class FlightHack extends Hack
 		player.airStrafingSpeed = speed.getValueF();
 		
 		player.setVelocity(0, 0, 0);
-		Vec3d velocity = player.getVelocity();
-		
-		if(MC.options.keyJump.isPressed())
-			player.setVelocity(velocity.add(0, speed.getValue(), 0));
-		
-		if(MC.options.keySneak.isPressed())
-			player.setVelocity(velocity.subtract(0, speed.getValue(), 0));
+		Vec3d velcity = player.getVelocity();
+		ssdvAction ssdv = shouldSetDownwardsVelocity();
+		if (ssdv.equals(ssdvAction.DOWN)) {
+			player.setVelocity(velcity.subtract(0, speed.getValue(), 0));
+		}
+		else if (ssdv.equals(ssdvAction.UP)) {
+			player.setVelocity(velcity.add(0, speed.getValue(), 0));
+		}
+		else {
+			if(MC.options.keyJump.isPressed())
+				player.setVelocity(velcity.add(0, speed.getValue(), 0));
+			
+			if(MC.options.keySneak.isPressed())
+				player.setVelocity(velcity.subtract(0, speed.getValue(), 0));
+		}
 	}
 	
 	@Override

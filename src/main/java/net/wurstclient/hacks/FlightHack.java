@@ -86,10 +86,10 @@ public final class FlightHack extends Hack
 		Vec3d velcity = player.getVelocity();
 		ssdvAction ssdv = shouldSetDownwardsVelocity();
 		if (ssdv.equals(ssdvAction.DOWN)) {
-			player.setVelocity(velcity.subtract(0, speed.getValue(), 0));
+			player.setVelocity(velcity.subtract(0, 0.07D, 0)); // 0.0625D
 		}
 		else if (ssdv.equals(ssdvAction.UP)) {
-			player.setVelocity(velcity.add(0, speed.getValue(), 0));
+			player.setVelocity(velcity.add(0, 0.07D, 0));
 		}
 		else {
 			if(MC.options.keyJump.isPressed())

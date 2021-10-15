@@ -84,7 +84,7 @@ public final class AutoMLGHack extends Hack implements UpdateListener {
 
             // place block
             Rotation rotation = RotationUtils.getNeededRotations(hitVec);
-            PlayerMoveC2SPacket.LookOnly packet = new PlayerMoveC2SPacket.LookOnly(rotation.getYaw(),
+            PlayerMoveC2SPacket.LookAndOnGround packet = new PlayerMoveC2SPacket.LookAndOnGround(rotation.getYaw(),
                     rotation.getPitch(), MC.player.isOnGround());
             MC.player.networkHandler.sendPacket(packet);
             IMC.getInteractionManager().rightClickBlock(neighbor, side2, hitVec);
@@ -116,10 +116,10 @@ public final class AutoMLGHack extends Hack implements UpdateListener {
         Block block = BlockUtils.getBlock(bp);
 
         if(!(block instanceof AirBlock) && !(block instanceof FluidBlock)){
-            int slot = player.inventory.getSlotWithStack(new ItemStack(Items.WATER_BUCKET));
+            int slot = player.getInventory().getSlotWithStack(new ItemStack(Items.WATER_BUCKET));
             if (slot >= 0 && slot < 9) {
-                player.pitch = 90;
-                player.inventory.selectedSlot = slot;
+                player.setPitch(90);
+                player.getInventory().selectedSlot = slot;
                 if(placeBlock(bp)){
                     last_pos = bp;
                     timer = 1;

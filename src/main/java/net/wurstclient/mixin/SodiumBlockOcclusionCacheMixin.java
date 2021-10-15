@@ -7,10 +7,12 @@ import net.minecraft.world.BlockView;
 import net.wurstclient.event.EventManager;
 import net.wurstclient.events.ShouldDrawSideListener;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+@Pseudo
 @SuppressWarnings("InvalidInjectorMethodSignature")
 @Mixin(targets = "me.jellysquid.mods.sodium.client.render.occlusion.BlockOcclusionCache", remap = false)
 public class SodiumBlockOcclusionCacheMixin {

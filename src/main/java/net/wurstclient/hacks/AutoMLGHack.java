@@ -41,7 +41,7 @@ public final class AutoMLGHack extends Hack implements UpdateListener {
     private BlockPos last_pos = null;
 
     public AutoMLGHack() {
-        super("AutoMLG", "Auto MLG Save");
+        super("AutoMLG");
         setCategory(Category.MOVEMENT);
         addSetting(mfall);
     }

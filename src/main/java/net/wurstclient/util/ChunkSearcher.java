@@ -7,6 +7,7 @@
  */
 package net.wurstclient.util;
 
+import java.io.Console;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +19,8 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.Chunk;
 import net.wurstclient.WurstClient;
+import net.minecraft.server.world.ServerWorld;
+import net.wurstclient.commands.SetSeedCmd;
 
 /**
  * Searches a {@link Chunk} for a particular type of {@link Block}.
@@ -30,7 +33,8 @@ public final class ChunkSearcher
 	private final ArrayList<BlockPos> matchingBlocks = new ArrayList<>();
 	private ChunkSearcher.Status status = Status.IDLE;
 	private Future<?> future;
-	
+	private SetSeedCmd localSeed = null;
+
 	public ChunkSearcher(Chunk chunk, Block block, int dimensionId)
 	{
 		this.chunk = chunk;
@@ -40,6 +44,7 @@ public final class ChunkSearcher
 	
 	public void startSearching(ExecutorService pool)
 	{
+		this.localSeed = WurstClient.INSTANCE.getCmds().setSeedCmd;
 		if(status != Status.IDLE)
 			throw new IllegalStateException();
 		
@@ -71,7 +76,14 @@ public final class ChunkSearcher
 						return;
 					
 					BlockPos pos = new BlockPos(x, y, z);
-					Block block = BlockUtils.getBlock(pos);
+					ServerWorld localWorld = this.localSeed.getWorldById(this.dimensionId);
+					Block block;
+					if (localWorld != null && blockisFullyConcealed(pos)) {
+						block = localWorld.getBlockState(pos).getBlock();
+					}
+					else {
+						block = BlockUtils.getBlock(pos);
+					}
 					if(!this.block.equals(block))
 						continue;
 					
@@ -81,6 +93,15 @@ public final class ChunkSearcher
 		status = Status.DONE;
 	}
 	
+	private boolean blockIsOpaque(BlockPos pos)
+	{
+		return WurstClient.MC.world.getBlockState(pos).isOpaque();
+	}
+	private boolean blockisFullyConcealed(BlockPos pos)
+	{
+		return blockIsOpaque(pos) && blockIsOpaque(pos.up()) && blockIsOpaque(pos.down()) && blockIsOpaque(pos.north()) && blockIsOpaque(pos.south()) && blockIsOpaque(pos.east()) && blockIsOpaque(pos.west());
+	}
+
 	public void cancelSearching()
 	{
 		new Thread(this::cancelNow, "ChunkSearcher-canceller").start();

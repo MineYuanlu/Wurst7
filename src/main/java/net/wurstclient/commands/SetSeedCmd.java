@@ -7,6 +7,7 @@ import net.wurstclient.util.ChatUtils;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.mojang.authlib.GameProfileRepository;
 import com.mojang.authlib.minecraft.MinecraftSessionService;
@@ -32,13 +33,15 @@ import net.minecraft.world.level.LevelInfo;
 import net.minecraft.world.level.LevelProperties;
 import net.minecraft.world.level.storage.LevelStorage;
 
-
+/**
+ * Set server seed. Enables {@link net.wurstclient.util.ChunkSearcher ChunkSearcher} to bypass the anti-X-ray plugin
+ * */
 public final class SetSeedCmd extends Command
 {
     private IntegratedServer server = null;
     private long seed = 0l;
     private String worldname = "";
-    private boolean busy = false;
+    private AtomicBoolean busy = new AtomicBoolean();
     private Map<Integer, ServerWorld> worldIndex = new HashMap<>();
 	public SetSeedCmd()
 	{
@@ -72,9 +75,8 @@ public final class SetSeedCmd extends Command
         else throw new CmdError(".seed <long int>");
 
         this.worldname = String.format("set-seed-%d", this.seed);
-        if (this.busy) throw new CmdError("busy");
-        this.busy = true;
-        new Thread(() -> enable_async(), "enable_async").start();
+        if (this.busy.getAndSet(true)) throw new CmdError("busy");
+        new Thread(this::enable_async, "enable_async").start();
     }
 
     private void enable_async()
@@ -97,7 +99,12 @@ public final class SetSeedCmd extends Command
                 session = MC.getLevelStorage().createSession(this.worldname);
                 GameRules gameRules = new GameRules();
                 gameRules.get(GameRules.DO_DAYLIGHT_CYCLE).set(false, null);
+                gameRules.get(GameRules.DO_WEATHER_CYCLE).set(false, null);
                 gameRules.get(GameRules.DO_MOB_GRIEFING).set(false, null);
+                gameRules.get(GameRules.RANDOM_TICK_SPEED).set(0, null);
+                gameRules.get(GameRules.DO_FIRE_TICK).set(false, null);
+                gameRules.get(GameRules.DO_MOB_SPAWNING).set(false, null);
+                gameRules.get(GameRules.NATURAL_REGENERATION).set(false, null);
                 LevelInfo levelInfo = new LevelInfo(this.worldname, GameMode.SPECTATOR, false, Difficulty.PEACEFUL, true, gameRules, DataPackSettings.SAFE_MODE);
                 resourceManager = MC.createIntegratedResourceManager(registryTracker, __session -> levelInfo.getDataPackSettings(), (__session, _registryManager, __resourceManager, __dataPackSettings) -> {
                     return new LevelProperties(levelInfo, GeneratorType.DEFAULT.createDefaultOptions(_registryManager, this.seed, true, false), Lifecycle.stable());
@@ -107,7 +114,7 @@ public final class SetSeedCmd extends Command
         catch (Exception e) {
             e.printStackTrace();
             ChatUtils.message("Error: game creation failed");
-            this.busy = false;
+            this.busy.set(false);
             return;
         }
         this.server = MinecraftServer.startServer(
@@ -125,13 +132,12 @@ public final class SetSeedCmd extends Command
         }
         this.dumpServerWorldId();
         ChatUtils.message(String.format("local world %s loaded", worldname));
-        this.busy = false;
+        this.busy.set(false);
     }
     private void disable() throws CmdError
 	{
-        if (this.busy) throw new CmdError("busy");
-        this.busy = true;
-        new Thread(() -> disable_async(), "disable_async").start();
+        if (this.busy.getAndSet(true)) throw new CmdError("busy");
+        new Thread(this::disable_async, "disable_async").start();
 	}
 
     private void disable_async()
@@ -143,11 +149,11 @@ public final class SetSeedCmd extends Command
         ChatUtils.message(String.format("local world %s is stopped", this.worldname));
         this.seed = 0l;
         this.worldname = "";
-        this.busy = false;
+        this.busy.set(false);
     }
 
     public IntegratedServer getServer() {
-        if (this.busy) return null;
+        if (this.busy.get()) return null;
         return this.server;
     }
 

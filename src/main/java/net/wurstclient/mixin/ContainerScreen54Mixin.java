@@ -7,6 +7,8 @@
  */
 package net.wurstclient.mixin;
 
+import java.util.stream.Stream;
+
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -22,6 +24,7 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.LiteralText;
 import net.minecraft.text.Text;
 import net.wurstclient.WurstClient;
+import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.hacks.AutoStealHack;
 
 @Mixin(GenericContainerScreen.class)
@@ -35,6 +38,8 @@ public abstract class ContainerScreen54Mixin
 	
 	private final AutoStealHack autoSteal =
 		WurstClient.INSTANCE.getHax().autoStealHack;
+	private final WarehouseCmd warehouse =
+		WurstClient.INSTANCE.getCmds().warehouseCmd;
 	private int mode;
 	
 	public ContainerScreen54Mixin(WurstClient wurst,
@@ -51,6 +56,9 @@ public abstract class ContainerScreen54Mixin
 		
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
+		
+		Stream<Slot> slotStream = handler.slots.stream().limit(rows * 9);
+		if (warehouse.callbackOpenWindow(slotStream)) return;
 		
 		if(autoSteal.areButtonsVisible())
 		{

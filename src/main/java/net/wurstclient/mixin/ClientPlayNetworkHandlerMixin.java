@@ -15,13 +15,21 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.network.Packet;
 import net.minecraft.network.listener.ClientPlayPacketListener;
+import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
+import net.wurstclient.WurstClient;
+import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.event.EventManager;
 import net.wurstclient.events.PacketOutputListener.PacketOutputEvent;
+
 
 @Mixin(ClientPlayNetworkHandler.class)
 public abstract class ClientPlayNetworkHandlerMixin
 	implements ClientPlayPacketListener
 {
+	
+	private final WarehouseCmd warehouse =
+			WurstClient.INSTANCE.getCmds().warehouseCmd;
+	
 	@Inject(at = {@At("HEAD")},
 		method = {"sendPacket(Lnet/minecraft/network/Packet;)V"},
 		cancellable = true)
@@ -32,5 +40,12 @@ public abstract class ClientPlayNetworkHandlerMixin
 		
 		if(event.isCancelled())
 			ci.cancel();
+	}
+	
+	@Inject(at={@At("RETURN")},
+			method = {"onInventory(Lnet/minecraft/network/packet/s2c/play/InventoryS2CPacket;)V"},
+			cancellable = true)
+	private void onInventory(InventoryS2CPacket packet, CallbackInfo ci) {
+		warehouse.callbackInventory(packet.getContents(), packet.getSyncId());
 	}
 }

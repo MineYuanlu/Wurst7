@@ -7,8 +7,6 @@
  */
 package net.wurstclient.mixin;
 
-import java.util.stream.Stream;
-
 import org.spongepowered.asm.mixin.Mixin;
 
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
@@ -53,8 +51,7 @@ public abstract class ShulkerBoxScreenMixin
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
 		
-		Stream<Slot> slotStream = handler.slots.stream().limit(rows * 9);
-		if (warehouse.callbackOpenWindow(slotStream)) return;
+		if (warehouse.callbackOpenWindow(handler.syncId,rows*9)) return;
 		
 		if(autoSteal.areButtonsVisible())
 		{

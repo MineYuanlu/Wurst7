@@ -7,8 +7,6 @@
  */
 package net.wurstclient.mixin;
 
-import java.util.stream.Stream;
-
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -57,8 +55,7 @@ public abstract class ContainerScreen54Mixin
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
 		
-		Stream<Slot> slotStream = handler.slots.stream().limit(rows * 9);
-		if (warehouse.callbackOpenWindow(slotStream)) return;
+		if (warehouse.callbackOpenWindow(handler.syncId, rows * 9)) return;
 		
 		if(autoSteal.areButtonsVisible())
 		{
@@ -110,7 +107,6 @@ public abstract class ContainerScreen54Mixin
 			waitForDelay();
 			if(this.mode != mode || client.currentScreen == null)
 				break;
-			
 			onMouseClick(slot, slot.id, 0, SlotActionType.QUICK_MOVE);
 		}
 	}

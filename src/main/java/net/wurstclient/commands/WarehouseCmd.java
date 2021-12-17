@@ -10,12 +10,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -27,6 +30,7 @@ import java.util.stream.Stream;
 
 import org.lwjgl.opengl.GL11;
 
+import com.google.common.collect.Maps;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -51,6 +55,7 @@ import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Shader;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Identifier;
@@ -370,31 +375,114 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			return list;
 		}
 
+		/**
+		 * Count the number of items
+		 * 
+		 * @param filterEmpty Filter empty items
+		 */
+		public static ItemList of(Collection<ItemStack> list, boolean filterEmpty) {
+			ItemList itemList = new ItemList();
+			for (ItemStack item : list) {
+
+				if (filterEmpty && (item == null || item.isEmpty())) continue;
+
+				itemList.add(item);
+
+			}
+			return itemList;
+		}
+
+		/**
+		 * Count the number of items
+		 * 
+		 * @param filterEmpty Filter empty items
+		 */
+		public static ItemList of(ItemStack[] list, boolean filterEmpty) {
+			ItemList itemList = new ItemList();
+			for (ItemStack item : list) {
+
+				if (filterEmpty && (item == null || item.isEmpty())) continue;
+
+				itemList.add(item);
+
+			}
+			return itemList;
+		}
+
+		/**
+		 * Count the number of items that can be put in
+		 * 
+		 * @param addEmpty Allow empty slots to be placed
+		 * @param allItems
+		 */
+		public static ItemList ofFree(ItemStack[] list, boolean addEmpty, Set<String> allItems) {
+			ItemList	itemList	= new ItemList();
+			int			emptyCount	= 0;
+			for (ItemStack item : list) {
+
+				if (item == null || item.isEmpty()) {
+					emptyCount++;
+					continue;
+				}
+
+				int		empty	= Math.max(0, item.getMaxCount() - item.getCount());
+				String	name	= Registry.ITEM.getId(item.getItem()).toString();
+				itemList.compute(name, (name0, count) -> count == null ? empty : (count + empty));
+
+			}
+			if (allItems != null) for (String name : allItems) itemList.putIfAbsent(name, 0);
+
+			if (addEmpty && emptyCount > 0) {
+
+				final int								EmptyCount			= emptyCount;
+				BiFunction<String, Integer, Integer>	addEmptyFunction	= (name, count) ->		//
+				Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * EmptyCount + count;
+
+				for (String name : itemList.keySet().toArray(String[]::new)) itemList.compute(name, addEmptyFunction);
+
+				itemList.put(null, EmptyCount);
+			}
+			return itemList;
+		}
+
 		public void add(ItemStack itemStack) {
 			String	name	= Registry.ITEM.getId(itemStack.getItem()).toString();
 			int		amount	= itemStack.getCount();
 			compute(name, (ignore, old) -> old == null ? amount : (amount + old));
 		}
 
-		/**
-		 * Check whether there are items in the player's backpack that can be put into
-		 * this item list.
-		 */
-		public boolean hasCanOutput(PlayerInventory inv) {
-			System.out.println("hasCanOutput: " + //
-					inv.main.stream()//
-							.map(ItemStack::getItem)//
-							.map(Registry.ITEM::getId)//
-							.map(Identifier::toString)//
-							.toList()//
-			);
-			System.out.println(keySet());
+		public boolean hasCanInput(PlayerInventory inv) {
+
 			return inv.main.stream()//
 					.map(ItemStack::getItem)//
 					.map(Registry.ITEM::getId)//
 					.map(Identifier::toString)//
-					.anyMatch(this::containsKey)//
+					.map(this::get)//
+					.anyMatch(count -> count != null && count.intValue() > 0)//
 			;
+
+		}
+
+		/**
+		 * Check whether there are items in the player's backpack that can be put into
+		 * this item list.
+		 * 
+		 * @param cache Recorded contents of containers
+		 */
+		public boolean hasCanOutput(PlayerInventory inv, ItemList cache) {
+			Stream<String> stream = inv.main.stream()//
+					.map(ItemStack::getItem)//
+					.map(Registry.ITEM::getId)//
+					.map(Identifier::toString)//
+			;
+
+			if (cache != null) stream = stream.filter(name -> Objects.requireNonNullElse(cache.get(name), 0) > 0);
+
+			return stream.anyMatch(this::containsKey);
+		}
+
+		public void retainAll(ItemList itemList) {
+			keySet().retainAll(itemList.keySet());
 		}
 
 		public JsonElement serialize() {
@@ -405,12 +493,33 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 	}
 
 	private static final class SortWarehouse implements UpdateListener {
+		/**
+		 * Construct a function to return the required quantity of a specified item in
+		 * the container according to the configuration.
+		 */
+		private static final Function<String, Integer> getAmountFactory(ItemList configList, int configAmount) {
+			if (configAmount == 0) {
+				// keep original amount
+				return configList::get;
+
+			} else if (configAmount > 0) {
+				// amount
+				return name -> configAmount;
+
+			} else {
+				// group amount
+				return name -> Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * -configAmount;
+
+			}
+
+		}
+
 		private final AutoStealHack								autoSteal	= WURST.getHax().autoStealHack;
 		/** configs */
 		private final Config									config;
 		private final LinkedHashMap<BlockPos, ContaionerConfig>	contaioners;
-		private final AtomicReference<Status>					status;
 
+		private final AtomicReference<Status>					status;
 		/** Waiting container */
 		private CompletableFuture<ItemStack[]>					waitingChest;
 		private Integer											waitingSyncId;
@@ -418,10 +527,17 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		/** Container in use */
 		private int												nowSyncId;
+
 		/** next call task */
 		private Runnable										next;
 		private String											nextName;
 		private boolean											stop;
+
+		/** close callback */
+		private CompletableFuture<Boolean>						screenCloseListener;
+
+		/** The number of items need to stored in the specified container. */
+		private final HashMap<BlockPos, ItemList>				posCache	= Maps.newHashMap();
 
 		public SortWarehouse(Config config, AtomicReference<Status> status) {
 			if (status.get() != Status.RUNNING) throw new IllegalStateException(status.get().name());
@@ -492,13 +608,21 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			return true;
 		}
 
+		/** close screen in main thread */
 		private void callCloseScreen() {
+			screenCloseListener = new CompletableFuture<>();
 			EVENTS.add(UpdateListener.class, this);
+			try {
+				screenCloseListener.get();
+			} catch (Throwable e) {
+				CrashReport crashReport = CrashReport.create(e, "Close Screen Future Waiting");
+				throw new CrashException(crashReport);
+			}
 		}
 
 		/**
 		 * Look for an input container that is not explicitly empty, go to scan, and
-		 * then take out the item.
+		 * then take out the items.
 		 */
 		private void doInput() {
 			status.set(Status.RUNNING);
@@ -527,15 +651,18 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			setNext(this::startOnce, "restart - by Input Once");
 		}
 
+		/**
+		 * Find a container that matches the items in the inventory, go to scan, and
+		 * then put in the items.
+		 */
 		private void doOutput() {
 			status.set(Status.RUNNING);
 			PlayerInventory						inv		= MC.player.getInventory();
-			Entry<BlockPos, ContaionerConfig>	next	= contaioners						//
-					.entrySet().stream()													//
-					.filter(e -> e.getValue().type == ContaionerType.OUTPUT)				//
-					.filter(e -> e.getValue().blocks.get(e.getKey()).hasCanOutput(inv))		//
-					.findFirst().orElse(null);												//
-			// TODO 依据箱子缓存防止重复查找<BlockPos,ItemList>
+			Entry<BlockPos, ContaionerConfig>	next	= contaioners												//
+					.entrySet().stream()																			//
+					.filter(e -> e.getValue().type == ContaionerType.OUTPUT)										//
+					.filter(e -> e.getValue().blocks.get(e.getKey()).hasCanOutput(inv, posCache.get(e.getKey())))	//
+					.findFirst().orElse(null);																		//
 
 			if (next == null) {
 				setNext(this::doTemp, "Temp - by No Output");
@@ -547,21 +674,29 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			ItemStack[] list = openContaioner(next.getKey());
 			if (list == null) return;
 
-			ContaionerConfig cc = next.getValue();
-			store(cc.blocks.get(next.getKey()), cc.amount, list);
+			ContaionerConfig	cc			= next.getValue();
+			ItemList			configList	= cc.blocks.get(next.getKey());
+			store(configList, cc.amount, list);
 			callCloseScreen();
 
-			// TODO 放入物品 + 缓存内容
+			if (!scanChest(next.getKey(), configList, cc.amount)) return;
+
 			if (isInvEmpty(true)) setNext(this::startOnce, "restart - by Output Finish");
 			else setNext(this::doOutput, "Output - by Output Once");
 
 		}
 
+		/**
+		 * Put all items that cannot be stored in the inventory into a temporary
+		 * container with an empty space.
+		 */
 		private void doTemp() {
 			status.set(Status.RUNNING);
-			Entry<BlockPos, ContaionerConfig> next = contaioners.entrySet().stream()//
-					.filter(e -> e.getValue().type == ContaionerType.TEMP)//
-					.findFirst().orElse(null);
+			PlayerInventory						inv		= MC.player.getInventory();
+			Entry<BlockPos, ContaionerConfig>	next	= contaioners.entrySet().stream()							//
+					.filter(e -> e.getValue().type == ContaionerType.TEMP)											//
+					.filter(e -> posCache.get(e.getKey()) == null || posCache.get(e.getKey()).hasCanInput(inv))		//
+					.findFirst().orElse(null);																		//
 
 			if (next == null) {
 				ChatUtils.error("All temporary containers are full, cannot continue.");
@@ -574,15 +709,18 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 			store(list);
 			callCloseScreen();
-			// TODO 存放背包所有物品，缓存内容
+
+			if (!scanChest(next.getKey())) return;
 
 			if (isInvEmpty(true)) setNext(this::startOnce, "restart - by Temp Finish");
 			else setNext(this::doTemp, "Temp - by Temp Once");
 
 		}
 
+		/** @return success */
 		private boolean goTo(BlockPos pos) {
 			status.set(Status.RUN_MOVING);
+			if (pos.getSquaredDistance(MC.player.getBlockPos()) < Math.pow(range.getValue(), 2)) return true;
 			CompletableFuture<Boolean> future = new CompletableFuture<>();
 			GoToHelper.goTo(pos, future::complete);
 			try {
@@ -615,8 +753,14 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		@Override
 		public void onUpdate() {
-			MC.player.closeScreen();
-			EVENTS.remove(UpdateListener.class, this);
+			if (screenCloseListener != null) {
+
+				MC.player.closeScreen();
+				EVENTS.remove(UpdateListener.class, this);
+
+				screenCloseListener.complete(Boolean.TRUE);
+
+			}
 		}
 
 		/**
@@ -632,7 +776,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 					ChatUtils.error("Can not open Chest");
 					return null;
 				}
-				return waitingChest.get(10, TimeUnit.SECONDS);// TODO 使用settings
+				return waitingChest.get(timeOut.getValueI(), TimeUnit.MILLISECONDS);
 			} catch (Throwable e) {
 				CrashReport crashReport = CrashReport.create(e, "Opening " + pos.toShortString());
 				throw new CrashException(crashReport);
@@ -642,6 +786,78 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			}
 		}
 
+		/**
+		 * Pick up a specified number of items in a slot with the least number of times.
+		 * 
+		 * <p>
+		 * Pick up all / half first, and then put down some items
+		 */
+		private void pickUpItem(int slot, int nowCount, int needCount) {
+			if (nowCount <= needCount) throw new IllegalArgumentException("Bad Count: " + nowCount + " <= " + needCount);
+
+			int halfNowCount = nowCount / 2 + (nowCount & 1);
+
+			if (needCount <= halfNowCount) {
+
+				MC.interactionManager.clickSlot(nowSyncId, slot, 1, SlotActionType.PICKUP, MC.player);
+				waitForDelay();
+
+				needCount = halfNowCount - needCount;
+
+			} else {
+
+				MC.interactionManager.clickSlot(nowSyncId, slot, 0, SlotActionType.PICKUP, MC.player);
+				waitForDelay();
+
+				needCount = nowCount - needCount;
+
+			}
+
+			while (needCount-- > 0) {
+
+				MC.interactionManager.clickSlot(nowSyncId, slot, 1, SlotActionType.PICKUP, MC.player);
+				waitForDelay();
+
+			}
+
+		}
+
+		/**
+		 * Put the picked up items into the specified grid, which can be combined with
+		 * the picked up items.
+		 * <p>
+		 * For a single slot, simply right-click to drop it. For multiple slots, use the
+		 * drag mode
+		 */
+		private void putDownItem(ArrayList<Integer> clickSlots) {
+			if (clickSlots.size() == 1) {
+
+				MC.interactionManager.clickSlot(nowSyncId, clickSlots.get(0), 0, SlotActionType.PICKUP, MC.player);
+				waitForDelay();
+
+				return;
+
+			}
+
+			MC.interactionManager.clickSlot(nowSyncId, clickSlots.get(0), 0, SlotActionType.QUICK_CRAFT, MC.player);
+			waitForDelay();
+
+			for (int i = 1; i < clickSlots.size(); i++) {
+
+				MC.interactionManager.clickSlot(nowSyncId, clickSlots.get(i), 1, SlotActionType.QUICK_CRAFT, MC.player);
+				waitForDelay();
+
+			}
+
+			MC.interactionManager.clickSlot(nowSyncId, -1, 2, SlotActionType.QUICK_CRAFT, MC.player);
+			waitForDelay();
+
+		}
+
+		/**
+		 * The logic that interacts with the right button of the box is copied from
+		 * {@code TillauraHack}
+		 */
 		private boolean rightClickBlockSimple(BlockPos pos) {
 			Vec3d	eyesPos				= RotationUtils.getEyesPos();
 			Vec3d	posVec				= Vec3d.ofCenter(pos);
@@ -663,6 +879,79 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			return false;
 		}
 
+		/**
+		 * Scan the container (temporary type). When the container has any empty slot,
+		 * set the cache to null (representing that at least one item of any type can be
+		 * stored). Only when all slots in the container are occupied, the type and
+		 * quantity of items that will be stored (the slot that are less than a group
+		 * but occupy one slot) will be recorded
+		 */
+		private boolean scanChest(BlockPos pos) {
+
+			if (!goTo(pos)) return false;// Not Found or Error
+
+			ItemStack[] list = openContaioner(pos);
+			if (list == null) return false;
+
+			try {
+
+				for (ItemStack itemStack : list) if (itemStack == null || itemStack.isEmpty()) {
+
+					posCache.remove(pos);
+					return true;
+
+				}
+
+				ItemList freeList = ItemList.ofFree(list, true, null);// 当前可插入数量
+				posCache.put(pos, freeList);
+
+			} finally {
+				callCloseScreen();
+			}
+
+			return true;
+
+		}
+
+		/**
+		 * Scan containers and update the contents of container items to prevent finding
+		 * invalid output containers
+		 */
+		private boolean scanChest(BlockPos pos, ItemList configList, int configAmount) {
+
+			if (!goTo(pos)) return false;// Not Found or Error
+
+			ItemStack[] list = openContaioner(pos);
+			if (list == null) return false;
+
+			try {
+
+				ItemList itemList = ItemList.of(list, true);// 记录目前有的数量
+				itemList.retainAll(configList);
+
+				ItemList freeList = ItemList.ofFree(list, true, configList.keySet());// 当前可插入数量
+				freeList.retainAll(configList);
+
+				Function<String, Integer> amountFactory = getAmountFactory(configList, configAmount);// 所需数量
+
+				for (String name : configList.keySet()) {
+
+					int	needCount	= Math.max(amountFactory.apply(name) - itemList.getOrDefault(name, 0), 0);
+					int	canCount	= Math.min(needCount, freeList.get(name));
+
+					itemList.put(name, canCount);
+
+				}
+				System.out.println("scan Cache: pos=" + pos + ", list=" + itemList);
+				posCache.put(pos, itemList);
+
+			} finally {
+				callCloseScreen();
+			}
+			return true;
+
+		}
+
 		private void setNext(Runnable runnable, String debugName) {
 			next		= runnable;
 			nextName	= debugName;
@@ -676,39 +965,50 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			else setNext(this::doOutput, "Output - by start");
 		}
 
+		/**
+		 * According to the configuration, take the specified number of items from the
+		 * opened container
+		 * 
+		 * @param stealList   Specified steal list
+		 * @param stealAmount Specified steal amount
+		 * @param itemList    Container contents
+		 * @return all clear
+		 */
 		private boolean steal(ItemList stealList, int stealAmount, ItemStack[] itemList) {
 
 			// need takes
-			ItemList takeList = new ItemList();
-			for (ItemStack item : itemList) takeList.add(item);
-			takeList.keySet().retainAll(stealList.keySet());
+			List<ItemStack>	inventory	= MC.player.getInventory().main;
+			ItemList		takeList	= ItemList.of(itemList, true);
 
-			BiFunction<String, Integer, Integer> amountFactory;
-			if (stealAmount == 0) {
-				// Keep the original quantity of items in the container
-				amountFactory = (name, amount) -> amount - stealList.get(name);
-			} else if (stealAmount > 0) {
-				// Keep the specified amount items in the container
-				amountFactory = (name, amount) -> amount - stealAmount;
-			} else {
-				// Keep the specified group amount items in the container
-				amountFactory = (name, amount) -> amount - Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * stealAmount;
+			takeList.retainAll(stealList);
+
+			Function<String, Integer> targetAmountGetter = getAmountFactory(stealList, stealAmount);
+
+			for (Iterator<Entry<String, Integer>> itr = takeList.entrySet().iterator(); itr.hasNext();) {
+
+				Entry<String, Integer>	e		= itr.next();
+				String					name	= e.getKey();
+
+				e.setValue(e.getValue() - targetAmountGetter.apply(name));
+
 			}
 
-			for (String name : takeList.keySet().toArray(String[]::new)) takeList.compute(name, amountFactory);
-
+			// check empty take
 			if (takeList.isEmpty()) return true;
 			boolean noTake = true;
-			for (Integer count : takeList.values())// check empty take
+			for (Integer count : takeList.values()) {
+
 				if (count != null && count > 0) {
 					noTake = false;
 					break;
 				}
+
+			}
+
 			if (noTake) return true;
 
-			System.out.println("takeList+++ " + takeList);
-
 			// take items
+			boolean notEmpty = false;
 			for (int i = 0; i < itemList.length; i++) {
 
 				ItemStack item = itemList[i];
@@ -718,11 +1018,12 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 				Integer	amount	= takeList.get(name);
 				if (amount == null || amount <= 0) continue;
 
-				System.out.println(String.format("steal Item: slot=%d, count=%d, tar=%d", i, item.getCount(), amount));
 				if (item.getCount() <= amount) {
-
+					// take all items in this slot
 					amount -= item.getCount();
 					MC.interactionManager.clickSlot(nowSyncId, i, 0, SlotActionType.QUICK_MOVE, MC.player);
+
+					if (item.getCount() > 0) notEmpty = true;
 					waitForDelay();
 
 					if (amount > 0) takeList.put(name, amount);
@@ -730,62 +1031,74 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 				} else {
 					// Processing logic for taking some items
+					Item				itemType	= item.getItem();
+					int					canPutCount	= 0;
+					ArrayList<Integer>	putSlots	= new ArrayList<>();
 
-//					item 当前物品
-					// TODO
-//					MC.player.getInventory();
+					for (int j = 0; j < 36 && canPutCount < amount; j++) {
 
-					takeList.remove(name);
+						ItemStack invItemStack = inventory.get(j);
+
+						if (!invItemStack.isOf(itemType)) continue;
+						if (invItemStack.getCount() >= invItemStack.getMaxCount()) continue;
+
+						canPutCount += itemType.getMaxCount() - invItemStack.getCount();
+						putSlots.add(itemList.length + (j < 9 ? (j + 27) : (j - 9)));
+
+					}
+					for (int j = 0; j < 36 && canPutCount < amount; j++) {
+
+						if (!inventory.get(j).isEmpty()) continue;
+
+						canPutCount += itemType.getMaxCount();
+						putSlots.add(itemList.length + (j < 9 ? (j + 27) : (j - 9)));
+
+					}
+
+					System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
+
+					if (canPutCount <= 0 || putSlots.isEmpty()) continue;
+
+					pickUpItem(i, item.getCount(), Math.min(amount, canPutCount));
+					putDownItem(putSlots);
+
+					if (canPutCount >= amount) takeList.remove(name);
 				}
 
 			}
-			return false;
-
-			// TODO Auto-generated method stub
+			return !notEmpty;
 
 		}
 
+		/**
+		 * According to the configuration, put the specified number of items to the
+		 * opened container
+		 * 
+		 * @param stealList   Specified store list
+		 * @param stealAmount Specified store amount
+		 * @param itemList    Container contents
+		 */
 		private void store(ItemList storeList, int storeAmount, ItemStack[] itemList) {
-			ItemList		putList		= new ItemList();
-			ItemList		chestList	= new ItemList();
+
+			// need puts
 			PlayerInventory	inventory	= MC.player.getInventory();
+			ItemList		putList		= ItemList.of(inventory.main, true);
+			ItemList		chestList	= ItemList.of(itemList, true);
 
-			for (ItemStack item : inventory.main) putList.add(item);
-			for (ItemStack item : itemList) chestList.add(item);
-			System.out.println("putList+++1 " + putList);
-			System.out.println("putList+++2 " + storeList);
-			putList.keySet().retainAll(storeList.keySet());
+			putList.retainAll(storeList);
 
-			Function<String, Integer> targetAmountGetter;
-			if (storeAmount == 0) {
-				// keep original amount
-				targetAmountGetter = storeList::get;
-			} else if (storeAmount > 0) {
-				// amount
-				targetAmountGetter = name -> storeAmount;
-			} else {
-				// group amount
-				targetAmountGetter = name -> Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * storeAmount;
-			}
+			Function<String, Integer> targetAmountGetter = getAmountFactory(storeList, storeAmount);
 
 			for (Iterator<Entry<String, Integer>> itr = putList.entrySet().iterator(); itr.hasNext();) {
+
 				Entry<String, Integer>	e		= itr.next();
 				String					name	= e.getKey();
-
-				if (!storeList.containsKey(name)) {
-
-					itr.remove();
-					continue;
-
-				}
 
 				e.setValue(targetAmountGetter.apply(name) - chestList.getOrDefault(name, 0));
 
 			}
 
-			System.out.println("putList+++3 " + putList);
-
-			// take items
+			// put items
 			for (int i = 0; i < 36; i++) {
 
 				ItemStack item = inventory.main.get(i);
@@ -800,42 +1113,80 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 				System.out.printf("store Item: slot=%d, count=%d, tar=%d\n", slotId, item.getCount(), amount);
 				if (item.getCount() <= amount) {
 
+					amount -= item.getCount();
 					MC.interactionManager.clickSlot(nowSyncId, slotId, 0, SlotActionType.QUICK_MOVE, MC.player);
 					waitForDelay();
-					amount -= item.getCount();
-//
+
 					if (amount > 0) putList.put(name, amount);
 					else putList.remove(name);
 
 				} else {
 					// Processing logic for putting some items
 
-//					item 当前物品
-					// TODO
-//					MC.player.getInventory();
+					Item				itemType	= item.getItem();
+					int					canPutCount	= 0;
+					ArrayList<Integer>	putSlots	= new ArrayList<>();
+
+					for (int j = 0; j < itemList.length && canPutCount < amount; j++) {
+
+						ItemStack invItemStack = itemList[j];
+
+						if (!invItemStack.isOf(itemType)) continue;
+						if (invItemStack.getCount() >= invItemStack.getMaxCount()) continue;
+
+						canPutCount += itemType.getMaxCount() - invItemStack.getCount();
+						putSlots.add(j);
+					}
+
+					for (int j = 0; j < itemList.length && canPutCount < amount; j++) {
+
+						ItemStack invItemStack = itemList[j];
+
+						if (!invItemStack.isEmpty()) continue;
+
+						canPutCount += itemType.getMaxCount();
+						putSlots.add(j);
+
+					}
+
+					System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
+
+					if (canPutCount <= 0 || putSlots.isEmpty()) continue;
+
+					pickUpItem(slotId, item.getCount(), Math.min(amount, canPutCount));
+					putDownItem(putSlots);
+
+					if (canPutCount >= amount) putList.remove(name);
 
 					putList.remove(name);
 				}
 
 			}
 
-			// TODO Auto-generated method stub
-
 		}
 
+		/**
+		 * Store all the items in the inventory into the open container
+		 */
 		private void store(ItemStack[] itemList) {
-			List<ItemStack>	inventory	= MC.player.getInventory().main;
-			int				i			= 0;
-			for (ItemStack itemStack : inventory) {
+			List<ItemStack> inventory = MC.player.getInventory().main;
 
+			for (int i = 0; i < 36; i++) {
+
+				ItemStack itemStack = inventory.get(i);
 				if (itemStack == null || itemStack.isEmpty()) continue;
 
-				MC.interactionManager.clickSlot(nowSyncId, itemList.length + i, 0, SlotActionType.QUICK_MOVE, MC.player);
-				++i;
+				int slotId = itemList.length + (i < 9 ? (i + 27) : (i - 9));
+				MC.interactionManager.clickSlot(nowSyncId, slotId, 0, SlotActionType.QUICK_MOVE, MC.player);
+				waitForDelay();
 
 			}
 		}
 
+		/**
+		 * When operating in the container, execute the function of single delay and use
+		 * the setting of {@link AutoStealHack} to prevent too fast operation.
+		 */
 		private void waitForDelay() {
 			try {
 				Thread.sleep(autoSteal.getDelay());
@@ -847,6 +1198,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 	}
 
+	/** Running status */
 	public enum Status {
 		IDLE("idle"), //
 		SIGN("signing container"), //
@@ -866,6 +1218,8 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 	}
 
 	private static final SliderSetting	range			= new SliderSetting("Range", 5, 1, 6, 0.05, ValueDisplay.DECIMAL);
+	private static final SliderSetting	timeOut			= new SliderSetting("Time Out", "Maximum delay allowed for interactive operation (unit: ms)", 3000, 100,
+			1000 * 20, 1, ValueDisplay.INTEGER);
 
 	private static final Gson			GSON			= new GsonBuilder().setPrettyPrinting().create();
 

@@ -12,8 +12,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
@@ -68,6 +68,7 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.registry.Registry;
+import net.wurstclient.SearchTags;
 import net.wurstclient.ai.PathFinder;
 import net.wurstclient.ai.PathPos;
 import net.wurstclient.ai.PathProcessor;
@@ -79,6 +80,7 @@ import net.wurstclient.events.RenderListener;
 import net.wurstclient.events.RightClickListener;
 import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hacks.AutoStealHack;
+import net.wurstclient.settings.ColorSetting;
 import net.wurstclient.settings.SliderSetting;
 import net.wurstclient.settings.SliderSetting.ValueDisplay;
 import net.wurstclient.util.BlockUtils;
@@ -93,8 +95,11 @@ import net.wurstclient.util.json.JsonUtils;
  * @author yuanlu
  *
  */
-public class WarehouseCmd extends Command implements UpdateListener, RenderListener, RightClickListener {
-
+@SearchTags({ "warehouse", "sort", "chest", "ware", "item" })
+public class WarehouseCmd extends Command {
+	/**
+	 * Collection of all container configurations
+	 */
 	public static final class Config {
 		//
 
@@ -167,6 +172,9 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 	}
 
+	/**
+	 * Single container configuration
+	 */
 	private static final class ContaionerConfig implements Comparable<ContaionerConfig> {
 
 		public static ContaionerConfig deserialize(JsonElement element) {
@@ -232,13 +240,14 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 		}
 	}
 
+	/** 容器类型 */
 	private static enum ContaionerType {
 		/** input */
-		INPUT("To remove items from containers", "input", "i", "in", "produce"),
+		INPUT(Color.green, "To remove items from containers", "input", "i", "in", "produce"),
 		/** output */
-		OUTPUT("To pack items into containers", "output", "o", "out", "storage"),
+		OUTPUT(Color.pink, "To pack items into containers", "output", "o", "out", "storage"),
 		/** temp */
-		TEMP("Store temporary or not on the list items", "temp", "t", "tmp", "bad");
+		TEMP(Color.orange, "Store temporary or not on the list items", "temp", "t", "tmp", "bad");
 
 		private static final ContaionerType[]	BY_ID	= values();
 		public static final String				syntax;
@@ -253,22 +262,44 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			return null;
 		}
 
-		private final String	description;
+		private final ColorSetting	colorSetting;
 
-		private final String[]	matchs;
+		private final String		description;
 
-		private ContaionerType(String description, String... matchs) {
+		private final String[]		matchs;
+
+		private ContaionerType(Color color, String description, String... matchs) {
 			this.description	= String.join("/", matchs) + ": " + description;
 			this.matchs			= matchs;
+			this.colorSetting	= new ColorSetting(name(), color);
 		}
 	}
 
+	/**
+	 * Go to the target location
+	 */
 	private static class GoToHelper implements UpdateListener, RenderListener {
+		/** Just get close to the target */
+		private static final class NearFinder extends PathFinder {
+
+			public NearFinder(BlockPos goal) {
+				super(goal);
+			}
+
+			@Override
+			protected boolean checkDone() {
+				double	range	= Math.max(WarehouseCmd.range.getValue() / 2, 2);
+				double	disSqu	= current.getSquaredDistance(getGoal());
+				return done = disSqu < range * range;
+			}
+
+		}
+
 		private static final GoToHelper INSTANCE = new GoToHelper();
 
 		public static void goTo(BlockPos goal, Consumer<Boolean> callback) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
-			INSTANCE.pathFinder	= new PathFinder(goal);
+			INSTANCE.pathFinder	= new NearFinder(goal);
 			INSTANCE.callback	= callback;
 
 			// start
@@ -279,6 +310,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		private PathFinder			pathFinder;
 		private PathProcessor		processor;
+
 		private boolean				enabled;
 
 		private Consumer<Boolean>	callback;
@@ -354,7 +386,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			if (processor != null//
 					&& !pathFinder.isPathStillValid(processor.getIndex())) {
 				System.out.println("Updating path...");
-				pathFinder = new PathFinder(pathFinder.getGoal());
+				pathFinder = new NearFinder(pathFinder.getGoal());
 				return;
 			}
 
@@ -363,9 +395,11 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 			if (processor.isDone()) disable(true);
 		}
-
 	}
 
+	/**
+	 * Record item information (only save item name + item count)
+	 */
 	private static final class ItemList extends LinkedHashMap<String, Integer> {
 		@Serial private static final long serialVersionUID = -814964946466372693L;
 
@@ -377,7 +411,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		/**
 		 * Count the number of items
-		 * 
+		 *
 		 * @param filterEmpty Filter empty items
 		 */
 		public static ItemList of(Collection<ItemStack> list, boolean filterEmpty) {
@@ -394,7 +428,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		/**
 		 * Count the number of items
-		 * 
+		 *
 		 * @param filterEmpty Filter empty items
 		 */
 		public static ItemList of(ItemStack[] list, boolean filterEmpty) {
@@ -411,9 +445,9 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		/**
 		 * Count the number of items that can be put in
-		 * 
+		 *
 		 * @param addEmpty Allow empty slots to be placed
-		 * @param allItems
+		 * @param allItems Collection of all item names
 		 */
 		public static ItemList ofFree(ItemStack[] list, boolean addEmpty, Set<String> allItems) {
 			ItemList	itemList	= new ItemList();
@@ -466,7 +500,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 		/**
 		 * Check whether there are items in the player's backpack that can be put into
 		 * this item list.
-		 * 
+		 *
 		 * @param cache Recorded contents of containers
 		 */
 		public boolean hasCanOutput(PlayerInventory inv, ItemList cache) {
@@ -492,12 +526,248 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 		}
 	}
 
+	/**
+	 * Sign Helper
+	 *
+	 * @author yuanlu
+	 */
+	private static final class SignWarehouse implements UpdateListener, RenderListener, RightClickListener {
+		private static final ColorSetting		SEE_COLOR	= new ColorSetting("see color", Color.LIGHT_GRAY);
+		/** RENDER */
+		private VertexBuffer					solidBox;
+
+		private VertexBuffer					outlinedBox;
+		private final Config					config;
+		/** signing config */
+		private final ContaionerConfig			contaionerConfig;
+		/** ChestESP status keep */
+		private final boolean					signing_ChestESP_enable;
+		private Box								signing_lookingBox;
+		private BlockPos						signing_waitingChest;
+		private Integer							signing_waitingSyncId;
+		private int								signing_waitingSize;
+
+		private final AtomicReference<Status>	status;
+
+		/**
+		 * Marking containers
+		 *
+		 * @param config Overall config
+		 * @param status status
+		 * @param type   Represents the container type
+		 * @param weight priority
+		 * @param amount Maximum put in quantity (when putting in) / minimum reserved
+		 *               quantity (when extracting)<br>
+		 *               When the number is negative, the unit is grouped
+		 * @param clear  When the type is output container, do you want to remove other
+		 *               items not in this container classification list
+		 */
+		public SignWarehouse(Config config, AtomicReference<Status> status, ContaionerType type, int weight, int amount, boolean clear) {
+
+			this.config				= Objects.requireNonNull(config, "config");
+			this.status				= Objects.requireNonNull(status, "status");
+
+			contaionerConfig		= new ContaionerConfig(type, weight, amount, clear);
+			signing_ChestESP_enable	= WURST.getHax().chestEspHack.isEnabled();
+			WURST.getHax().chestEspHack.setEnabled(false);
+
+			EVENTS.add(UpdateListener.class, this);
+			EVENTS.add(RenderListener.class, this);
+			EVENTS.add(RightClickListener.class, this);
+
+			renderInit(true);
+
+			ChatUtils.message("Enter sign mode");
+		}
+
+		public synchronized void callbackInventory(List<ItemStack> items, int syncId) {
+			if ((signing_waitingSyncId == null) || (signing_waitingSyncId != syncId)) return;
+
+			ItemList list = new ItemList();
+
+			items.stream()//
+					.limit(signing_waitingSize)//
+					.filter(stack -> !stack.isEmpty())//
+					.forEach(list::add);
+
+			contaionerConfig.blocks.put(signing_waitingChest, list);
+			config.cacheBlocks.put(signing_waitingChest, contaionerConfig);
+
+			signing_waitingChest	= null;
+			signing_waitingSyncId	= null;
+			MC.player.closeScreen();
+			ChatUtils.message("Container scanned successfully");
+		}
+
+		public synchronized boolean callbackOpenWindow(int syncId, int size) {
+			if (signing_waitingChest == null) return false;
+
+			if (signing_waitingSyncId != null) {
+
+				signing_waitingChest	= null;
+				signing_waitingSyncId	= null;
+
+				MC.player.closeScreen();
+				ChatUtils.warning("The last waiting container content was not received.");
+				ChatUtils.warning("The last and current wait has been cancelled to prevent content confusion.");
+				return true;
+			}
+
+			signing_waitingSyncId	= syncId;
+			signing_waitingSize		= size;
+
+			return true;
+		}
+
+		/**
+		 *
+		 */
+		public void exit() {
+
+			EVENTS.remove(UpdateListener.class, this);
+			EVENTS.remove(RenderListener.class, this);
+			EVENTS.remove(RightClickListener.class, this);
+
+			renderInit(false);
+
+			config.contaioners.stream()//
+					.filter(contaionerConfig::configEquals)//
+					.findAny()//
+					.ifPresentOrElse(contaionerConfig::mergeTo, () -> config.contaioners.add(contaionerConfig));
+			config.flush();
+
+			if (signing_ChestESP_enable) WURST.getHax().chestEspHack.setEnabled(true);
+
+			ChatUtils.message("Exit sign mode " + (signing_ChestESP_enable ? "§7, ChestESP resumed" : ""));
+		}
+
+		@Override
+		public void onRender(MatrixStack matrixStack, float partialTicks) {
+			if (signing_lookingBox == null) return;
+			// GL settings
+			GL11.glEnable(GL11.GL_BLEND);
+			GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+			GL11.glEnable(GL11.GL_LINE_SMOOTH);
+			GL11.glEnable(GL11.GL_CULL_FACE);
+			GL11.glDisable(GL11.GL_DEPTH_TEST);
+
+			matrixStack.push();
+			RenderUtils.applyRegionalRenderOffset(matrixStack);
+
+			BlockPos	camPos	= RenderUtils.getCameraBlockPos();
+			int			regionX	= (camPos.getX() >> 9) * 512;
+			int			regionZ	= (camPos.getZ() >> 9) * 512;
+
+			RenderSystem.setShader(GameRenderer::getPositionShader);
+			renderBoxes(matrixStack, SEE_COLOR.getColorF(), regionX, regionZ, signing_lookingBox);
+
+			matrixStack.pop();
+
+			// GL resets
+			RenderSystem.setShaderColor(1, 1, 1, 1);
+			GL11.glEnable(GL11.GL_DEPTH_TEST);
+			GL11.glDisable(GL11.GL_BLEND);
+			GL11.glDisable(GL11.GL_LINE_SMOOTH);
+		}
+
+		@Override
+		public void onRightClick(RightClickEvent event) {
+			if ((status.get() != Status.SIGN) || !(MC.crosshairTarget instanceof BlockHitResult)) return;
+			BlockPos	pos			= ((BlockHitResult) MC.crosshairTarget).getBlockPos();
+
+			BlockEntity	blockEntity	= MC.world.getBlockEntity(pos);
+			if (!(blockEntity instanceof ChestBlockEntity //
+					|| blockEntity instanceof EnderChestBlockEntity//
+					|| blockEntity instanceof ShulkerBoxBlockEntity //
+					|| blockEntity instanceof BarrelBlockEntity))
+				return;
+
+			if (signing_waitingChest != null) {
+
+				signing_waitingChest = null;
+				ChatUtils.warning("The last waiting container content was not received.");
+				ChatUtils.warning("The last and current wait has been cancelled to prevent content confusion.");
+
+				return;
+			}
+
+			if (config.cacheBlocks.containsKey(pos)) {
+				ContaionerConfig cc = config.cacheBlocks.get(pos);
+
+				cc.blocks.remove(pos);
+				config.cacheBlocks.remove(pos);
+
+				ChatUtils.message("A container has been removed from " + (cc == contaionerConfig ? "now signing" : cc));
+
+				return;
+			}
+
+			signing_waitingChest = pos;
+			ChatUtils.message("Wait for the container to open...");
+		}
+
+		@Override
+		public void onUpdate() {
+			signing_lookingBox = null;
+			if (MC.crosshairTarget instanceof BlockHitResult) {
+
+				BlockEntity blockEntity = MC.world.getBlockEntity(((BlockHitResult) MC.crosshairTarget).getBlockPos());
+
+				if (blockEntity == null) return;
+
+				signing_lookingBox = getBox(blockEntity);
+			}
+		}
+
+		private void renderBoxes(MatrixStack matrixStack, float[] colorF, int regionX, int regionZ, Box... boxes) {
+			for (Box box : boxes) {
+				matrixStack.push();
+
+				matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
+
+				matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
+
+				Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
+				Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
+				Shader		shader		= RenderSystem.getShader();
+				solidBox.setShader(viewMatrix, projMatrix, shader);
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
+				outlinedBox.setShader(viewMatrix, projMatrix, shader);
+
+				matrixStack.pop();
+			}
+		}
+
+		private void renderInit(boolean enable) {
+
+			Stream.of(solidBox, outlinedBox)//
+					.filter(Objects::nonNull)//
+					.forEach(VertexBuffer::close);
+			if (enable) {
+				solidBox	= new VertexBuffer();
+				outlinedBox	= new VertexBuffer();
+
+				Box box = new Box(BlockPos.ORIGIN);
+				RenderUtils.drawSolidBox(box, solidBox);
+				RenderUtils.drawOutlinedBox(box, outlinedBox);
+			}
+		}
+	}
+
+	/**
+	 * Sort Helper
+	 *
+	 * @author yuanlu
+	 */
 	private static final class SortWarehouse implements UpdateListener {
 		/**
 		 * Construct a function to return the required quantity of a specified item in
 		 * the container according to the configuration.
 		 */
-		private static final Function<String, Integer> getAmountFactory(ItemList configList, int configAmount) {
+		private static Function<String, Integer> getAmountFactory(ItemList configList, int configAmount) {
 			if (configAmount == 0) {
 				// keep original amount
 				return configList::get;
@@ -788,7 +1058,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 		/**
 		 * Pick up a specified number of items in a slot with the least number of times.
-		 * 
+		 *
 		 * <p>
 		 * Pick up all / half first, and then put down some items
 		 */
@@ -968,7 +1238,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 		/**
 		 * According to the configuration, take the specified number of items from the
 		 * opened container
-		 * 
+		 *
 		 * @param stealList   Specified steal list
 		 * @param stealAmount Specified steal amount
 		 * @param itemList    Container contents
@@ -984,10 +1254,9 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 			Function<String, Integer> targetAmountGetter = getAmountFactory(stealList, stealAmount);
 
-			for (Iterator<Entry<String, Integer>> itr = takeList.entrySet().iterator(); itr.hasNext();) {
+			for (Entry<String, Integer> e : takeList.entrySet()) {
 
-				Entry<String, Integer>	e		= itr.next();
-				String					name	= e.getKey();
+				String name = e.getKey();
 
 				e.setValue(e.getValue() - targetAmountGetter.apply(name));
 
@@ -1039,8 +1308,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 						ItemStack invItemStack = inventory.get(j);
 
-						if (!invItemStack.isOf(itemType)) continue;
-						if (invItemStack.getCount() >= invItemStack.getMaxCount()) continue;
+						if (!invItemStack.isOf(itemType) || (invItemStack.getCount() >= invItemStack.getMaxCount())) continue;
 
 						canPutCount += itemType.getMaxCount() - invItemStack.getCount();
 						putSlots.add(itemList.length + (j < 9 ? (j + 27) : (j - 9)));
@@ -1073,9 +1341,9 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 		/**
 		 * According to the configuration, put the specified number of items to the
 		 * opened container
-		 * 
-		 * @param stealList   Specified store list
-		 * @param stealAmount Specified store amount
+		 *
+		 * @param storeList   Specified store list
+		 * @param storeAmount Specified store amount
 		 * @param itemList    Container contents
 		 */
 		private void store(ItemList storeList, int storeAmount, ItemStack[] itemList) {
@@ -1089,10 +1357,9 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 			Function<String, Integer> targetAmountGetter = getAmountFactory(storeList, storeAmount);
 
-			for (Iterator<Entry<String, Integer>> itr = putList.entrySet().iterator(); itr.hasNext();) {
+			for (Entry<String, Integer> e : putList.entrySet()) {
 
-				Entry<String, Integer>	e		= itr.next();
-				String					name	= e.getKey();
+				String name = e.getKey();
 
 				e.setValue(targetAmountGetter.apply(name) - chestList.getOrDefault(name, 0));
 
@@ -1131,8 +1398,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 						ItemStack invItemStack = itemList[j];
 
-						if (!invItemStack.isOf(itemType)) continue;
-						if (invItemStack.getCount() >= invItemStack.getMaxCount()) continue;
+						if (!invItemStack.isOf(itemType) || (invItemStack.getCount() >= invItemStack.getMaxCount())) continue;
 
 						canPutCount += itemType.getMaxCount() - invItemStack.getCount();
 						putSlots.add(j);
@@ -1217,7 +1483,106 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 	}
 
+	private static final class SummaryWarehouse implements RenderListener {
+		private final EnumMap<ContaionerType, ArrayList<Box>>	chests	= new EnumMap<>(ContaionerType.class);
+		private VertexBuffer									solidBox;
+		private VertexBuffer									outlinedBox;
+
+		public SummaryWarehouse(Config config) {
+
+			config.flush();
+
+			for (ContaionerType ct : ContaionerType.BY_ID) {
+
+				chests.put(ct, new ArrayList<>());
+
+			}
+
+			for (Entry<BlockPos, ContaionerConfig> e : config.cacheBlocks.entrySet()) {
+				chests.get(e.getValue().type).add(BlockUtils.getBoundingBox(e.getKey()));
+
+			}
+
+			solidBox	= new VertexBuffer();
+			outlinedBox	= new VertexBuffer();
+
+			Box box = new Box(BlockPos.ORIGIN);
+			RenderUtils.drawSolidBox(box, solidBox);
+			RenderUtils.drawOutlinedBox(box, outlinedBox);
+
+			EVENTS.add(RenderListener.class, this);
+
+			ChatUtils.message("Enter summary mode");
+		}
+
+		public void exit() {
+			EVENTS.remove(RenderListener.class, this);
+			Stream.of(solidBox, outlinedBox)//
+					.filter(Objects::nonNull)//
+					.forEach(VertexBuffer::close);
+			ChatUtils.message("Exit summary mode");
+		}
+
+		@Override
+		public void onRender(MatrixStack matrixStack, float partialTicks) {
+			// GL settings
+			GL11.glEnable(GL11.GL_BLEND);
+			GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+			GL11.glEnable(GL11.GL_LINE_SMOOTH);
+			GL11.glEnable(GL11.GL_CULL_FACE);
+			GL11.glDisable(GL11.GL_DEPTH_TEST);
+
+			matrixStack.push();
+			RenderUtils.applyRegionalRenderOffset(matrixStack);
+
+			BlockPos	camPos	= RenderUtils.getCameraBlockPos();
+			int			regionX	= (camPos.getX() >> 9) * 512;
+			int			regionZ	= (camPos.getZ() >> 9) * 512;
+
+			RenderSystem.setShader(GameRenderer::getPositionShader);
+			for (ContaionerType ct : ContaionerType.BY_ID) {
+
+				renderBoxes(matrixStack, chests.get(ct), ct.colorSetting.getColorF(), regionX, regionZ);
+
+			}
+
+			matrixStack.pop();
+
+			// GL resets
+			RenderSystem.setShaderColor(1, 1, 1, 1);
+			GL11.glEnable(GL11.GL_DEPTH_TEST);
+			GL11.glDisable(GL11.GL_BLEND);
+			GL11.glDisable(GL11.GL_LINE_SMOOTH);
+		}
+
+		private void renderBoxes(MatrixStack matrixStack, ArrayList<Box> boxes, float[] colorF, int regionX, int regionZ) {
+
+			for (Box box : boxes) {
+				matrixStack.push();
+
+				matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
+
+				matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
+
+				Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
+				Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
+				Shader		shader		= RenderSystem.getShader();
+				solidBox.setShader(viewMatrix, projMatrix, shader);
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
+				outlinedBox.setShader(viewMatrix, projMatrix, shader);
+
+				matrixStack.pop();
+
+			}
+		}
+
+	}
+
 	private static final SliderSetting	range			= new SliderSetting("Range", 5, 1, 6, 0.05, ValueDisplay.DECIMAL);
+
 	private static final SliderSetting	timeOut			= new SliderSetting("Time Out", "Maximum delay allowed for interactive operation (unit: ms)", 3000, 100,
 			1000 * 20, 1, ValueDisplay.INTEGER);
 
@@ -1226,10 +1591,6 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 	private static final String			DEF_GAME_FOLDER	= "default";
 
 	private static final Path			FOLDER			= WURST.getWurstFolder().resolve("warehouse");
-
-	private static final Color			COLOR			= Color.BLUE;
-
-	private static final float[]		COLOR_ARR		= new float[] { COLOR.getRed() / 255F, COLOR.getGreen() / 255F, COLOR.getBlue() / 255F };
 
 	private static Box getBox(BlockEntity blockEntity) {
 
@@ -1306,24 +1667,13 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 	}
 
 	private final AtomicReference<Status>	status	= new AtomicReference<>(Status.IDLE);
-
 	private Config							config;
-	/** RENDER */
-	private VertexBuffer					solidBox;
-
-	private VertexBuffer					outlinedBox;
-	/** signing config */
-	private ContaionerConfig				signing;
-	/** ChestESP status keep */
-	private boolean							signing_ChestESP_enable;
-	private Box								signing_lookingBox;
-	private BlockPos						signing_waitingChest;
-	private Integer							signing_waitingSyncId;
-
-	private int								signing_waitingSize;
-
 	/** sort helper */
 	private SortWarehouse					sorting;
+	/** sign helper */
+	private SignWarehouse					signing;
+
+	private SummaryWarehouse				summary;
 
 	public WarehouseCmd() {
 		super("warehouse", //
@@ -1335,6 +1685,11 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 				".warehouse run §7Start moving items", //
 				".warehouse summary §7Displays the current warehouse summary"//
 		);
+
+		addSetting(range);
+		addSetting(timeOut);
+		for (ContaionerType ct : ContaionerType.values()) addSetting(ct.colorSetting);
+		addSetting(SignWarehouse.SEE_COLOR);
 	}
 
 	@Override
@@ -1347,109 +1702,16 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			loadConf(merge(args, 1));
 		}
 		case "save" -> saveConf(merge(args, 1));
-		case "sign" -> {
-			if (status.get() == Status.SIGN) {
-				sign(null, 0, 0, false);
-				return;
-			}
-			/*
-			 * 限制数量： 对于input型，将会保留指定数量的物品 对于output型，将最多存放指定数量的物品 对于数量:
-			 * 正数表示限制N个，负数表示限制N组，0表示保持物品原数目
-			 */
-			if (args.length <= 1) throw new CmdSyntaxError("Missing parameter:\n"//
-					+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
-					+ "type - §7Type of container: produce (input) / storage (output)\n"//
-					+ "w - §7Container priority\n"//
-					+ "a - §7Limit quantity:\n"//
-					+ "  §7- For input type, the specified number of items will be retained\n"//
-					+ "  §7- For output type, the specified number of items will be stored at most\n"//
-					+ "  §7- For this quantity:\n"//
-					+ "  §7- A positive number means to limit n items\n"//
-					+ "  §7- A negative number means to limit n groups\n"//
-					+ "  §7- And 0 means to keep the original number of items\n"//
-					+ "c - §7For output type, whether to take out items that do not belong to this box"//
-			);
-
-			ContaionerType type = ContaionerType.get(args[1]);
-			if (type == null) throw new CmdSyntaxError(ContaionerType.syntax);
-
-			int weight = 0;
-			if (args.length > 2) try {
-				weight = Integer.parseInt(args[2]);
-			} catch (NumberFormatException e) {
-				throw new CmdSyntaxError("Invalid weight: " + args[2]);
-			}
-
-			int amount = 0;
-			if (args.length > 3) try {
-				amount = Integer.parseInt(args[3]);
-			} catch (NumberFormatException e) {
-				throw new CmdSyntaxError("Invalid amount: " + args[3]);
-			}
-
-			boolean clear = false;
-			if (args.length > 4) clear = hasStr(args[4], "true", "ture", "t", "yes", "y");
-			sign(type, weight, amount, clear);
-		}
+		case "sign" -> sign(args);
 		case "run" -> run();
+		case "summary" -> summary();
 		default -> throw new CmdSyntaxError("Unknown subcommand: " + args[0]);
 		}
 	}
 
-	public synchronized void callbackClickBlock(BlockPos pos) {
-		if (status.get() != Status.SIGN) return;
-
-		BlockEntity blockEntity = MC.world.getBlockEntity(pos);
-		if (!(blockEntity instanceof ChestBlockEntity //
-				|| blockEntity instanceof EnderChestBlockEntity//
-				|| blockEntity instanceof ShulkerBoxBlockEntity //
-				|| blockEntity instanceof BarrelBlockEntity))
-			return;
-
-		if (signing_waitingChest != null) {
-
-			signing_waitingChest = null;
-			ChatUtils.warning("The last waiting container content was not received.");
-			ChatUtils.warning("The last and current wait has been cancelled to prevent content confusion.");
-
-			return;
-		}
-
-		if (config.cacheBlocks.containsKey(pos)) {
-			ContaionerConfig cc = config.cacheBlocks.get(pos);
-
-			cc.blocks.remove(pos);
-			config.cacheBlocks.remove(pos);
-
-			ChatUtils.message("A container has been removed from " + (cc == signing ? "now signing" : cc));
-
-			return;
-		}
-
-		signing_waitingChest = pos;
-		ChatUtils.message("Wait for the container to open...");
-	}
-
 	public synchronized void callbackInventory(List<ItemStack> items, int syncId) {
 		switch (status.get()) {
-		case SIGN -> {
-			if ((signing_waitingSyncId == null) || (signing_waitingSyncId != syncId)) return;
-
-			ItemList list = new ItemList();
-
-			items.stream()//
-					.limit(signing_waitingSize)//
-					.filter(stack -> !stack.isEmpty())//
-					.forEach(list::add);
-
-			signing.blocks.put(signing_waitingChest, list);
-			config.cacheBlocks.put(signing_waitingChest, signing);
-
-			signing_waitingChest	= null;
-			signing_waitingSyncId	= null;
-			MC.player.closeScreen();
-			ChatUtils.message("Container scanned successfully");
-		}
+		case SIGN -> signing.callbackInventory(items, syncId);
 		case RUN_SCANNING -> sorting.callbackInventory(items, syncId);
 		default -> {
 		}
@@ -1458,25 +1720,7 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 
 	public synchronized boolean callbackOpenWindow(int syncId, int size) {
 		return switch (status.get()) {
-		case SIGN -> {
-			if (signing_waitingChest == null) yield false;
-
-			if (signing_waitingSyncId != null) {
-
-				signing_waitingChest	= null;
-				signing_waitingSyncId	= null;
-
-				MC.player.closeScreen();
-				ChatUtils.warning("The last waiting container content was not received.");
-				ChatUtils.warning("The last and current wait has been cancelled to prevent content confusion.");
-				yield true;
-			}
-
-			signing_waitingSyncId	= syncId;
-			signing_waitingSize		= size;
-
-			yield true;
-		}
+		case SIGN -> signing.callbackOpenWindow(syncId, size);
 		case RUN_SCANNING -> sorting.callbackOpenWindow(syncId, size);
 		default -> false;
 		};
@@ -1523,100 +1767,6 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 			ChatUtils.message("Config loaded: " + confName);
 		} finally {
 			status.set(Status.IDLE);
-		}
-	}
-
-	@Override
-	public void onRender(MatrixStack matrixStack, float partialTicks) {
-		switch (status.get()) {
-		case SIGN: {
-			if (signing_lookingBox == null) break;
-			// GL settings
-			GL11.glEnable(GL11.GL_BLEND);
-			GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-			GL11.glEnable(GL11.GL_LINE_SMOOTH);
-			GL11.glEnable(GL11.GL_CULL_FACE);
-			GL11.glDisable(GL11.GL_DEPTH_TEST);
-
-			matrixStack.push();
-			RenderUtils.applyRegionalRenderOffset(matrixStack);
-
-			BlockPos	camPos	= RenderUtils.getCameraBlockPos();
-			int			regionX	= (camPos.getX() >> 9) * 512;
-			int			regionZ	= (camPos.getZ() >> 9) * 512;
-
-			RenderSystem.setShader(GameRenderer::getPositionShader);
-			renderBoxes(matrixStack, COLOR_ARR, regionX, regionZ, signing_lookingBox);
-
-			matrixStack.pop();
-
-			// GL resets
-			RenderSystem.setShaderColor(1, 1, 1, 1);
-			GL11.glEnable(GL11.GL_DEPTH_TEST);
-			GL11.glDisable(GL11.GL_BLEND);
-			GL11.glDisable(GL11.GL_LINE_SMOOTH);
-			break;
-		}
-		default:
-			break;
-		}
-	}
-
-	@Override
-	public void onRightClick(RightClickEvent event) {
-		if (MC.crosshairTarget instanceof BlockHitResult) {
-			callbackClickBlock(((BlockHitResult) MC.crosshairTarget).getBlockPos());
-		}
-	}
-
-	@Override
-	public void onUpdate() {
-		switch (status.get()) {
-		case SIGN: {
-			signing_lookingBox = null;
-			if (MC.crosshairTarget instanceof BlockHitResult) {
-
-				BlockEntity blockEntity = MC.world.getBlockEntity(((BlockHitResult) MC.crosshairTarget).getBlockPos());
-
-				if (blockEntity == null) return;
-
-				signing_lookingBox = getBox(blockEntity);
-			}
-			break;
-		}
-		default:
-			break;
-		}
-	}
-
-	private void renderBoxes(MatrixStack matrixStack, float[] colorF, int regionX, int regionZ, Box... boxes) {
-		for (Box box : boxes) {
-			matrixStack.push();
-
-			matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
-
-			matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
-
-			RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
-
-			Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
-			Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
-			Shader		shader		= RenderSystem.getShader();
-			solidBox.setShader(viewMatrix, projMatrix, shader);
-
-			RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
-			outlinedBox.setShader(viewMatrix, projMatrix, shader);
-
-			matrixStack.pop();
-		}
-	}
-
-	private void renderInit(boolean enable) {
-
-		Stream.of(solidBox, outlinedBox).filter(Objects::nonNull).forEach(VertexBuffer::close);
-		if (enable) {
-			solidBox	= new VertexBuffer();
-			outlinedBox	= new VertexBuffer();
 		}
 	}
 
@@ -1673,51 +1823,81 @@ public class WarehouseCmd extends Command implements UpdateListener, RenderListe
 	/**
 	 * Marking containers
 	 *
-	 * @param type   Represents the container type
-	 * @param weight priority
-	 * @param amount Maximum put in quantity (when putting in) / minimum reserved
-	 *               quantity (when extracting)<br>
-	 *               When the number is negative, the unit is group
-	 * @param clear  When the type is output container, do you want to remove other
-	 *               items not in this container classification list
+	 * @see SignWarehouse
 	 */
-	private void sign(ContaionerType type, int weight, int amount, boolean clear) throws CmdException {
+	private void sign(String[] args) throws CmdException {
 		if (status.compareAndSet(Status.IDLE, Status.SIGN)) {
-			if (config == null) throw new CmdError("Empty configuration");
 
-			signing					= new ContaionerConfig(type, weight, amount, clear);
-			signing_ChestESP_enable	= WURST.getHax().chestEspHack.isEnabled();
-			WURST.getHax().chestEspHack.setEnabled(false);
+			if (config == null) {
+				status.set(Status.IDLE);
+				throw new CmdError("Empty configuration");
+			}
 
-			EVENTS.add(UpdateListener.class, this);
-			EVENTS.add(RenderListener.class, this);
-			EVENTS.add(RightClickListener.class, this);
+			/*
+			 * 限制数量： 对于input型，将会保留指定数量的物品 对于output型，将最多存放指定数量的物品 对于数量:
+			 * 正数表示限制N个，负数表示限制N组，0表示保持物品原数目
+			 */
+			if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
+					+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
+					+ "type - §7Type of container: produce (input) / storage (output)\n"//
+					+ "w - §7Container priority\n"//
+					+ "a - §7Limit quantity:\n"//
+					+ "  §7- For input type, the specified number of items will be retained\n"//
+					+ "  §7- For output type, the specified number of items will be stored at most\n"//
+					+ "  §7- For this quantity:\n"//
+					+ "  §7- A positive number means to limit n items\n"//
+					+ "  §7- A negative number means to limit n groups\n"//
+					+ "  §7- And 0 means to keep the original number of items\n"//
+					+ "c - §7For output type, whether to take out items that do not belong to this box"//
+			);
 
-			renderInit(true);
+			ContaionerType type = ContaionerType.get(args[1]);
+			if (type == null) throw new CmdSyntaxError(ContaionerType.syntax);
 
-			ChatUtils.message("Enter sign mode");
+			int weight = 0;
+			if (args.length > 2) try {
+				weight = Integer.parseInt(args[2]);
+			} catch (NumberFormatException e) {
+				throw new CmdSyntaxError("Invalid weight: " + args[2]);
+			}
+
+			int amount = 0;
+			if (args.length > 3) try {
+				amount = Integer.parseInt(args[3]);
+			} catch (NumberFormatException e) {
+				throw new CmdSyntaxError("Invalid amount: " + args[3]);
+			}
+
+			boolean clear = false;
+			if (args.length > 4) clear = hasStr(args[4], "true", "ture", "t", "yes", "y");
+
+			signing = new SignWarehouse(config, status, type, weight, amount, clear);
+
 		} else if (status.get() == Status.SIGN) {
+
 			try {
-
-				EVENTS.remove(UpdateListener.class, this);
-				EVENTS.remove(RenderListener.class, this);
-				EVENTS.remove(RightClickListener.class, this);
-
-				renderInit(false);
-
-				config.contaioners.stream()//
-						.filter(signing::configEquals)//
-						.findAny()//
-						.ifPresentOrElse(signing::mergeTo, () -> config.contaioners.add(signing));
-				config.flush();
-
-				if (signing_ChestESP_enable) WURST.getHax().chestEspHack.setEnabled(true);
-
-				ChatUtils.message("Exit sign mode " + (signing_ChestESP_enable ? ", ChestESP resumed" : ""));
+				signing.exit();
 			} finally {
 				status.set(Status.IDLE);
 			}
+
 		} else throw new CmdError("Busy");
 	}
 
+	/**
+	 * 
+	 */
+	private void summary() throws CmdException {
+		if (summary != null) {
+			SummaryWarehouse summaryWarehouse = summary;
+			summary = null;
+			summaryWarehouse.exit();
+		} else {
+
+			Config config = this.config;
+			if (config == null) throw new CmdError("Empty configuration");
+
+			summary = new SummaryWarehouse(config);
+		}
+	}
 }

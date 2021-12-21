@@ -100,8 +100,7 @@ public class WarehouseCmd extends Command {
 	/**
 	 * Collection of all container configurations
 	 */
-	public static final class Config {
-		//
+	private static final class Config {
 
 		public static Config deserialize(JsonElement element) {
 			Config		conf		= new Config();
@@ -114,7 +113,7 @@ public class WarehouseCmd extends Command {
 		}
 
 		public final ArrayList<ContaionerConfig>							contaioners	= new ArrayList<>();
-		public final transient LinkedHashMap<BlockPos, ContaionerConfig>	cacheBlocks	= new LinkedHashMap<>();
+		public transient final LinkedHashMap<BlockPos, ContaionerConfig>	cacheBlocks	= new LinkedHashMap<>();
 		public transient Box												allArea;
 		public transient String												name;
 
@@ -179,11 +178,12 @@ public class WarehouseCmd extends Command {
 
 		public static ContaionerConfig deserialize(JsonElement element) {
 			JsonObject			obj		= element.getAsJsonObject();
-			ContaionerConfig	cc		= new ContaionerConfig(			//
-					ContaionerType.BY_ID[obj.get("t").getAsInt()],		//
-					obj.get("w").getAsInt(),							//
-					obj.get("a").getAsInt(),							//
-					obj.get("c").getAsBoolean()							//
+			ContaionerConfig	cc		= new ContaionerConfig(					//
+					ContaionerType.valueOf(obj.get("type").getAsString()),		//
+					obj.get("weight").getAsInt(),								//
+					InOutType.valueOf(obj.get("io").getAsString()),				//
+					obj.get("amount").getAsInt(),								//
+					obj.get("clear").getAsBoolean()								//
 			);
 			JsonObject			blocks	= obj.getAsJsonObject("blocks");
 			blocks.entrySet().forEach(e -> {
@@ -197,13 +197,15 @@ public class WarehouseCmd extends Command {
 		public final LinkedHashMap<BlockPos, ItemList>	blocks	= new LinkedHashMap<>();
 		public final ContaionerType						type;
 		public final int								weight;
+		public final InOutType							ioType;
 		public final int								amount;
 
 		public final boolean							clear;
 
-		public ContaionerConfig(ContaionerType type, int weight, int amount, boolean clear) {
+		public ContaionerConfig(ContaionerType type, int weight, InOutType ioType, int amount, boolean clear) {
 			this.type	= type;
 			this.weight	= weight;
+			this.ioType	= ioType == InOutType.ALL && type == ContaionerType.OUTPUT ? InOutType.COUNT_LIST : ioType;
 			this.amount	= amount;
 			this.clear	= clear;
 		}
@@ -224,10 +226,11 @@ public class WarehouseCmd extends Command {
 
 		public JsonElement serialize() {
 			JsonObject obj = new JsonObject();
-			obj.add("t", new JsonPrimitive(type.ordinal()));
-			obj.add("w", new JsonPrimitive(weight));
-			obj.add("a", new JsonPrimitive(amount));
-			obj.add("c", new JsonPrimitive(clear));
+			obj.add("type", new JsonPrimitive(type.name()));
+			obj.add("weight", new JsonPrimitive(weight));
+			obj.add("amount", new JsonPrimitive(amount));
+			obj.add("clear", new JsonPrimitive(clear));
+			obj.add("io", new JsonPrimitive(ioType.name()));
 			JsonObject blocks = new JsonObject();
 			this.blocks.forEach((b, i) -> blocks.add(Long.toUnsignedString(b.asLong(), Character.MAX_RADIX), i.serialize()));
 			obj.add("blocks", blocks);
@@ -236,11 +239,13 @@ public class WarehouseCmd extends Command {
 
 		@Override
 		public String toString() {
-			return String.format("CC [t=%c, w=%s, a=%s, c=%s]", type.name().charAt(0), weight, amount, clear ? "T" : "F");
+			return String.format("CC [t=%c, w=%s, io=%s, a=%s, c=%s]", type.name().charAt(0), weight, ioType, amount, clear ? "T" : "F");
 		}
 	}
 
-	/** 容器类型 */
+	/**
+	 * Container type, which determines the operation when interacting with it
+	 */
 	private static enum ContaionerType {
 		/** input */
 		INPUT(Color.green, "To remove items from containers", "input", "i", "in", "produce"),
@@ -268,7 +273,7 @@ public class WarehouseCmd extends Command {
 
 		private final String[]		matchs;
 
-		private ContaionerType(Color color, String description, String... matchs) {
+		ContaionerType(Color color, String description, String... matchs) {
 			this.description	= String.join("/", matchs) + ": " + description;
 			this.matchs			= matchs;
 			this.colorSetting	= new ColorSetting(name(), color);
@@ -288,7 +293,7 @@ public class WarehouseCmd extends Command {
 
 			@Override
 			protected boolean checkDone() {
-				double	range	= Math.max(WarehouseCmd.range.getValue() / 2, 2);
+				double	range	= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
 				double	disSqu	= current.getSquaredDistance(getGoal());
 				return done = disSqu < range * range;
 			}
@@ -314,6 +319,8 @@ public class WarehouseCmd extends Command {
 		private boolean				enabled;
 
 		private Consumer<Boolean>	callback;
+
+		private int					updateCount	= 0;
 
 		private void disable(boolean success) {
 			EVENTS.remove(UpdateListener.class, this);
@@ -360,7 +367,7 @@ public class WarehouseCmd extends Command {
 
 					PathPos	last	= path.get(path.size() - 1);
 
-					double	range	= WarehouseCmd.range.getValue();
+					double	range	= WarehouseCmd.RANGE.getValue();
 					if (last.getSquaredDistance(pathFinder.getGoal()) > range * range) {
 
 						ChatUtils.error("Unable to access the destination container");
@@ -386,7 +393,14 @@ public class WarehouseCmd extends Command {
 			if (processor != null//
 					&& !pathFinder.isPathStillValid(processor.getIndex())) {
 				System.out.println("Updating path...");
-				pathFinder = new NearFinder(pathFinder.getGoal());
+
+				if (updateCount++ > 30) {
+					ChatUtils.warning("Pathfinding failed: too many updates.");
+					disable(false);
+				} else {
+					pathFinder = new NearFinder(pathFinder.getGoal());
+				}
+
 				return;
 			}
 
@@ -395,6 +409,55 @@ public class WarehouseCmd extends Command {
 
 			if (processor.isDone()) disable(true);
 		}
+	}
+
+	/**
+	 * Input / output type, which determines how many items should be taken out /
+	 * put in.
+	 */
+	private static enum InOutType {
+		/**
+		 * Take out all, <b>OUTPUT container type is not supported</b>
+		 * <p>
+		 * <i>For the "OUTPUT" container, the use of the "ALL" type will cause all items
+		 * to be stored in that container, which is unable to achieve the purpose of
+		 * classification. Please use the "TEMP" container type.</i>
+		 */
+		ALL(false, "Access all item", "all", "a"),
+		/**
+		 * Use the list of items at the time of scanning and take out / store according
+		 * to the additional specified amount
+		 */
+		ITEM_LIST(true, "Use list as item list", "item", "i", "il"),
+		/**
+		 * Use the list of items at the time of scanning and its count, which will keep
+		 * the number of items in the list at the time of scanning.
+		 */
+		COUNT_LIST(true, "Use list as item and count list", "count", "c", "cl");
+
+		public static final String		syntax;
+		public static final InOutType[]	BY_ID	= values();
+		static {
+			StringJoiner stringJoiner = new StringJoiner("\n", "Unknown type:\n", "");
+			for (InOutType type : values()) stringJoiner.add(type.description);
+			syntax = stringJoiner.toString();
+		}
+
+		static InOutType get(String string) {
+			for (InOutType type : BY_ID) if (hasStr(string, type.matchs)) return type;
+			return null;
+		}
+
+		private final boolean	useList;
+		private final String	description;
+		private final String[]	matchs;
+
+		InOutType(boolean useList, String description, String... matchs) {
+			this.useList		= useList;
+			this.description	= String.join("/", matchs) + ": " + description;
+			this.matchs			= matchs;
+		}
+
 	}
 
 	/**
@@ -492,7 +555,7 @@ public class WarehouseCmd extends Command {
 					.map(Registry.ITEM::getId)//
 					.map(Identifier::toString)//
 					.map(this::get)//
-					.anyMatch(count -> count != null && count.intValue() > 0)//
+					.anyMatch(count -> count != null && count > 0)//
 			;
 
 		}
@@ -532,20 +595,21 @@ public class WarehouseCmd extends Command {
 	 * @author yuanlu
 	 */
 	private static final class SignWarehouse implements UpdateListener, RenderListener, RightClickListener {
-		private static final ColorSetting		SEE_COLOR	= new ColorSetting("see color", Color.LIGHT_GRAY);
+		private static final ColorSetting		SEE_COLOR	= new ColorSetting("see color",
+				"During signing, the identification color of the container location of what you see", Color.LIGHT_GRAY);
 		/** RENDER */
 		private VertexBuffer					solidBox;
-
 		private VertexBuffer					outlinedBox;
+
 		private final Config					config;
 		/** signing config */
 		private final ContaionerConfig			contaionerConfig;
 		/** ChestESP status keep */
-		private final boolean					signing_ChestESP_enable;
-		private Box								signing_lookingBox;
-		private BlockPos						signing_waitingChest;
-		private Integer							signing_waitingSyncId;
-		private int								signing_waitingSize;
+		private final boolean					ChestESP_enable;
+		private Box								lookingBox;
+		private BlockPos						waitingChest;
+		private Integer							waitingSyncId;
+		private int								waitingSize;
 
 		private final AtomicReference<Status>	status;
 
@@ -561,14 +625,15 @@ public class WarehouseCmd extends Command {
 		 *               When the number is negative, the unit is grouped
 		 * @param clear  When the type is output container, do you want to remove other
 		 *               items not in this container classification list
+		 * @param ioType
 		 */
-		public SignWarehouse(Config config, AtomicReference<Status> status, ContaionerType type, int weight, int amount, boolean clear) {
+		public SignWarehouse(Config config, AtomicReference<Status> status, ContaionerType type, int weight, InOutType ioType, int amount, boolean clear) {
 
-			this.config				= Objects.requireNonNull(config, "config");
-			this.status				= Objects.requireNonNull(status, "status");
+			this.config			= Objects.requireNonNull(config, "config");
+			this.status			= Objects.requireNonNull(status, "status");
 
-			contaionerConfig		= new ContaionerConfig(type, weight, amount, clear);
-			signing_ChestESP_enable	= WURST.getHax().chestEspHack.isEnabled();
+			contaionerConfig	= new ContaionerConfig(type, weight, ioType, amount, clear);
+			ChestESP_enable		= WURST.getHax().chestEspHack.isEnabled();
 			WURST.getHax().chestEspHack.setEnabled(false);
 
 			EVENTS.add(UpdateListener.class, this);
@@ -581,31 +646,31 @@ public class WarehouseCmd extends Command {
 		}
 
 		public synchronized void callbackInventory(List<ItemStack> items, int syncId) {
-			if ((signing_waitingSyncId == null) || (signing_waitingSyncId != syncId)) return;
+			if ((waitingSyncId == null) || (waitingSyncId != syncId)) return;
 
 			ItemList list = new ItemList();
 
 			items.stream()//
-					.limit(signing_waitingSize)//
+					.limit(waitingSize)//
 					.filter(stack -> !stack.isEmpty())//
 					.forEach(list::add);
 
-			contaionerConfig.blocks.put(signing_waitingChest, list);
-			config.cacheBlocks.put(signing_waitingChest, contaionerConfig);
+			contaionerConfig.blocks.put(waitingChest, list);
+			config.cacheBlocks.put(waitingChest, contaionerConfig);
 
-			signing_waitingChest	= null;
-			signing_waitingSyncId	= null;
+			waitingChest	= null;
+			waitingSyncId	= null;
 			MC.player.closeScreen();
 			ChatUtils.message("Container scanned successfully");
 		}
 
 		public synchronized boolean callbackOpenWindow(int syncId, int size) {
-			if (signing_waitingChest == null) return false;
+			if (waitingChest == null) return false;
 
-			if (signing_waitingSyncId != null) {
+			if (waitingSyncId != null) {
 
-				signing_waitingChest	= null;
-				signing_waitingSyncId	= null;
+				waitingChest	= null;
+				waitingSyncId	= null;
 
 				MC.player.closeScreen();
 				ChatUtils.warning("The last waiting container content was not received.");
@@ -613,8 +678,8 @@ public class WarehouseCmd extends Command {
 				return true;
 			}
 
-			signing_waitingSyncId	= syncId;
-			signing_waitingSize		= size;
+			waitingSyncId	= syncId;
+			waitingSize		= size;
 
 			return true;
 		}
@@ -636,14 +701,14 @@ public class WarehouseCmd extends Command {
 					.ifPresentOrElse(contaionerConfig::mergeTo, () -> config.contaioners.add(contaionerConfig));
 			config.flush();
 
-			if (signing_ChestESP_enable) WURST.getHax().chestEspHack.setEnabled(true);
+			if (ChestESP_enable) WURST.getHax().chestEspHack.setEnabled(true);
 
-			ChatUtils.message("Exit sign mode " + (signing_ChestESP_enable ? "§7, ChestESP resumed" : ""));
+			ChatUtils.message("Exit sign mode " + (ChestESP_enable ? "§7, ChestESP resumed" : ""));
 		}
 
 		@Override
 		public void onRender(MatrixStack matrixStack, float partialTicks) {
-			if (signing_lookingBox == null) return;
+			if (lookingBox == null) return;
 			// GL settings
 			GL11.glEnable(GL11.GL_BLEND);
 			GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -659,7 +724,7 @@ public class WarehouseCmd extends Command {
 			int			regionZ	= (camPos.getZ() >> 9) * 512;
 
 			RenderSystem.setShader(GameRenderer::getPositionShader);
-			renderBoxes(matrixStack, SEE_COLOR.getColorF(), regionX, regionZ, signing_lookingBox);
+			renderBoxes(matrixStack, SEE_COLOR.getColorF(), regionX, regionZ, lookingBox);
 
 			matrixStack.pop();
 
@@ -682,9 +747,9 @@ public class WarehouseCmd extends Command {
 					|| blockEntity instanceof BarrelBlockEntity))
 				return;
 
-			if (signing_waitingChest != null) {
+			if (waitingChest != null) {
 
-				signing_waitingChest = null;
+				waitingChest = null;
 				ChatUtils.warning("The last waiting container content was not received.");
 				ChatUtils.warning("The last and current wait has been cancelled to prevent content confusion.");
 
@@ -702,20 +767,20 @@ public class WarehouseCmd extends Command {
 				return;
 			}
 
-			signing_waitingChest = pos;
+			waitingChest = pos;
 			ChatUtils.message("Wait for the container to open...");
 		}
 
 		@Override
 		public void onUpdate() {
-			signing_lookingBox = null;
+			lookingBox = null;
 			if (MC.crosshairTarget instanceof BlockHitResult) {
 
 				BlockEntity blockEntity = MC.world.getBlockEntity(((BlockHitResult) MC.crosshairTarget).getBlockPos());
 
 				if (blockEntity == null) return;
 
-				signing_lookingBox = getBox(blockEntity);
+				lookingBox = getBox(blockEntity);
 			}
 		}
 
@@ -762,64 +827,82 @@ public class WarehouseCmd extends Command {
 	 *
 	 * @author yuanlu
 	 */
-	private static final class SortWarehouse implements UpdateListener {
+	private static final class SortWarehouse implements UpdateListener, RenderListener {
+		private static final ColorSetting	GOAL_COLOR	= new ColorSetting("goal color",
+				"During sorting, the identification color of the container location of the next interaction", Color.blue);
+		private static final SliderSetting	FLASH_SPEED	= new SliderSetting("flash", "Flashing speed of identification location", 500, 0, 1000, 1,
+				ValueDisplay.INTEGER);
+
 		/**
 		 * Construct a function to return the required quantity of a specified item in
 		 * the container according to the configuration.
 		 */
-		private static Function<String, Integer> getAmountFactory(ItemList configList, int configAmount) {
-			if (configAmount == 0) {
+		private static Function<String, Integer> getAmountFactory(ItemList configList, ContaionerConfig cc) {
+			int configAmount = cc.amount;
+			switch (cc.ioType) {
+			case ALL:
+			case ITEM_LIST:
+				if (configAmount > 0) {
+					// amount
+					return name -> configAmount;
+				} else {
+					// group amount
+					return name -> Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * -configAmount;
+				}
+			case COUNT_LIST:
 				// keep original amount
 				return configList::get;
-
-			} else if (configAmount > 0) {
-				// amount
-				return name -> configAmount;
-
-			} else {
-				// group amount
-				return name -> Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * -configAmount;
-
+			default:
+				throw new InternalError("Uncapped enumeration types:" + cc.ioType);
 			}
-
 		}
 
 		private final AutoStealHack								autoSteal	= WURST.getHax().autoStealHack;
-		/** configs */
-		private final Config									config;
-		private final LinkedHashMap<BlockPos, ContaionerConfig>	contaioners;
 
+		private final LinkedHashMap<BlockPos, ContaionerConfig>	contaioners;
 		private final AtomicReference<Status>					status;
 		/** Waiting container */
 		private CompletableFuture<ItemStack[]>					waitingChest;
 		private Integer											waitingSyncId;
+
 		private int												waitingSize;
 
 		/** Container in use */
 		private int												nowSyncId;
-
 		/** next call task */
 		private Runnable										next;
 		private String											nextName;
+
 		private boolean											stop;
 
 		/** close callback */
 		private CompletableFuture<Boolean>						screenCloseListener;
-
 		/** The number of items need to stored in the specified container. */
 		private final HashMap<BlockPos, ItemList>				posCache	= Maps.newHashMap();
+		/** RENDER */
+		private VertexBuffer									solidBox;
+
+		private VertexBuffer									outlinedBox;
+
+		private Box												goalBox;
+
+		private long											renderSwitchLast;
+
+		private boolean											renderSwitch;
 
 		public SortWarehouse(Config config, AtomicReference<Status> status) {
 			if (status.get() != Status.RUNNING) throw new IllegalStateException(status.get().name());
-			this.config			= config;
+			/** configs */
 			this.contaioners	= new LinkedHashMap<>();
 			this.status			= status;
 
-			ArrayList<ContaionerConfig> contaioners = new ArrayList<>(this.config.contaioners);
+			ArrayList<ContaionerConfig> contaioners = new ArrayList<>(config.contaioners);
 			contaioners.sort(Collections.reverseOrder());
 			contaioners.forEach(cc -> {
 				cc.blocks.keySet().forEach(pos -> this.contaioners.put(pos, cc));
 			});
+
+			renderInit(true);
 
 			setNext(this::startOnce, "start");
 			new Thread("Warehouse Sorter-" + config.hashCode()) {
@@ -884,6 +967,7 @@ public class WarehouseCmd extends Command {
 			EVENTS.add(UpdateListener.class, this);
 			try {
 				screenCloseListener.get();
+				waitForDelay();
 			} catch (Throwable e) {
 				CrashReport crashReport = CrashReport.create(e, "Close Screen Future Waiting");
 				throw new CrashException(crashReport);
@@ -912,7 +996,7 @@ public class WarehouseCmd extends Command {
 			if (list == null) return;
 
 			ContaionerConfig	cc		= next.getValue();
-			boolean				isEmpty	= steal(cc.blocks.get(next.getKey()), cc.amount, list);
+			boolean				isEmpty	= steal(cc.blocks.get(next.getKey()), cc, list);
 			callCloseScreen();
 
 			if (isEmpty)// The input container is empty. Ignored in this run.
@@ -946,10 +1030,10 @@ public class WarehouseCmd extends Command {
 
 			ContaionerConfig	cc			= next.getValue();
 			ItemList			configList	= cc.blocks.get(next.getKey());
-			store(configList, cc.amount, list);
+			store(configList, cc, list);
 			callCloseScreen();
 
-			if (!scanChest(next.getKey(), configList, cc.amount)) return;
+			if (!scanChest(next.getKey(), configList, cc)) return;
 
 			if (isInvEmpty(true)) setNext(this::startOnce, "restart - by Output Finish");
 			else setNext(this::doOutput, "Output - by Output Once");
@@ -990,7 +1074,11 @@ public class WarehouseCmd extends Command {
 		/** @return success */
 		private boolean goTo(BlockPos pos) {
 			status.set(Status.RUN_MOVING);
-			if (pos.getSquaredDistance(MC.player.getBlockPos()) < Math.pow(range.getValue(), 2)) return true;
+			if (pos.getSquaredDistance(MC.player.getBlockPos()) < Math.pow(RANGE.getValue(), 2)) return true;
+
+			goalBox = BlockUtils.getBoundingBox(pos);
+			EVENTS.add(RenderListener.class, this);
+
 			CompletableFuture<Boolean> future = new CompletableFuture<>();
 			GoToHelper.goTo(pos, future::complete);
 			try {
@@ -998,6 +1086,9 @@ public class WarehouseCmd extends Command {
 			} catch (Throwable e) {
 				CrashReport crashReport = CrashReport.create(e, "Goto Future Waiting");
 				throw new CrashException(crashReport);
+			} finally {
+				goalBox = null;
+				EVENTS.remove(RenderListener.class, this);
 			}
 		}
 
@@ -1019,6 +1110,47 @@ public class WarehouseCmd extends Command {
 				}
 			}
 			return isAll;
+		}
+
+		@Override
+		public void onRender(MatrixStack matrixStack, float partialTicks) {
+			if (goalBox == null) return;
+			long flashSpeed = FLASH_SPEED.getValueI();
+			if (flashSpeed > 0) {
+
+				long nowTime = System.currentTimeMillis();
+				if (nowTime - renderSwitchLast > flashSpeed) {
+					renderSwitch		= !renderSwitch;
+					renderSwitchLast	= nowTime;
+				}
+				if (!renderSwitch) return;
+
+			}
+
+			// GL settings
+			GL11.glEnable(GL11.GL_BLEND);
+			GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+			GL11.glEnable(GL11.GL_LINE_SMOOTH);
+			GL11.glEnable(GL11.GL_CULL_FACE);
+			GL11.glDisable(GL11.GL_DEPTH_TEST);
+
+			matrixStack.push();
+			RenderUtils.applyRegionalRenderOffset(matrixStack);
+
+			BlockPos	camPos	= RenderUtils.getCameraBlockPos();
+			int			regionX	= (camPos.getX() >> 9) * 512;
+			int			regionZ	= (camPos.getZ() >> 9) * 512;
+
+			RenderSystem.setShader(GameRenderer::getPositionShader);
+			renderBoxes(matrixStack, GOAL_COLOR.getColorF(), regionX, regionZ, goalBox);
+
+			matrixStack.pop();
+
+			// GL resets
+			RenderSystem.setShaderColor(1, 1, 1, 1);
+			GL11.glEnable(GL11.GL_DEPTH_TEST);
+			GL11.glDisable(GL11.GL_BLEND);
+			GL11.glDisable(GL11.GL_LINE_SMOOTH);
 		}
 
 		@Override
@@ -1046,7 +1178,7 @@ public class WarehouseCmd extends Command {
 					ChatUtils.error("Can not open Chest");
 					return null;
 				}
-				return waitingChest.get(timeOut.getValueI(), TimeUnit.MILLISECONDS);
+				return waitingChest.get(TIME_OUT.getValueI(), TimeUnit.MILLISECONDS);
 			} catch (Throwable e) {
 				CrashReport crashReport = CrashReport.create(e, "Opening " + pos.toShortString());
 				throw new CrashException(crashReport);
@@ -1124,6 +1256,43 @@ public class WarehouseCmd extends Command {
 
 		}
 
+		private void renderBoxes(MatrixStack matrixStack, float[] colorF, int regionX, int regionZ, Box... boxes) {
+			for (Box box : boxes) {
+				matrixStack.push();
+
+				matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
+
+				matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
+
+				Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
+				Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
+				Shader		shader		= RenderSystem.getShader();
+				solidBox.setShader(viewMatrix, projMatrix, shader);
+
+				RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
+				outlinedBox.setShader(viewMatrix, projMatrix, shader);
+
+				matrixStack.pop();
+			}
+		}
+
+		private void renderInit(boolean enable) {
+
+			Stream.of(solidBox, outlinedBox)//
+					.filter(Objects::nonNull)//
+					.forEach(VertexBuffer::close);
+			if (enable) {
+				solidBox	= new VertexBuffer();
+				outlinedBox	= new VertexBuffer();
+
+				Box box = new Box(BlockPos.ORIGIN);
+				RenderUtils.drawSolidBox(box, solidBox);
+				RenderUtils.drawOutlinedBox(box, outlinedBox);
+			}
+		}
+
 		/**
 		 * The logic that interacts with the right button of the box is copied from
 		 * {@code TillauraHack}
@@ -1132,7 +1301,7 @@ public class WarehouseCmd extends Command {
 			Vec3d	eyesPos				= RotationUtils.getEyesPos();
 			Vec3d	posVec				= Vec3d.ofCenter(pos);
 			double	distanceSqPosVec	= eyesPos.squaredDistanceTo(posVec);
-			double	rangeSq				= Math.pow(range.getValue(), 2);
+			double	rangeSq				= Math.pow(RANGE.getValue(), 2);
 
 			for (Direction side : Direction.values()) {
 				Vec3d	hitVec				= posVec.add(Vec3d.of(side.getVector()).multiply(0.5));
@@ -1187,7 +1356,7 @@ public class WarehouseCmd extends Command {
 		 * Scan containers and update the contents of container items to prevent finding
 		 * invalid output containers
 		 */
-		private boolean scanChest(BlockPos pos, ItemList configList, int configAmount) {
+		private boolean scanChest(BlockPos pos, ItemList configList, ContaionerConfig cc) {
 
 			if (!goTo(pos)) return false;// Not Found or Error
 
@@ -1202,7 +1371,7 @@ public class WarehouseCmd extends Command {
 				ItemList freeList = ItemList.ofFree(list, true, configList.keySet());// 当前可插入数量
 				freeList.retainAll(configList);
 
-				Function<String, Integer> amountFactory = getAmountFactory(configList, configAmount);// 所需数量
+				Function<String, Integer> amountFactory = getAmountFactory(configList, cc);// 所需数量
 
 				for (String name : configList.keySet()) {
 
@@ -1239,20 +1408,20 @@ public class WarehouseCmd extends Command {
 		 * According to the configuration, take the specified number of items from the
 		 * opened container
 		 *
-		 * @param stealList   Specified steal list
-		 * @param stealAmount Specified steal amount
-		 * @param itemList    Container contents
+		 * @param stealList Specified steal list
+		 * @param cc        Specified config
+		 * @param itemList  Container contents
 		 * @return all clear
 		 */
-		private boolean steal(ItemList stealList, int stealAmount, ItemStack[] itemList) {
+		private boolean steal(ItemList stealList, ContaionerConfig cc, ItemStack[] itemList) {
 
 			// need takes
 			List<ItemStack>	inventory	= MC.player.getInventory().main;
 			ItemList		takeList	= ItemList.of(itemList, true);
 
-			takeList.retainAll(stealList);
+			if (cc.ioType.useList) takeList.retainAll(stealList);
 
-			Function<String, Integer> targetAmountGetter = getAmountFactory(stealList, stealAmount);
+			Function<String, Integer> targetAmountGetter = getAmountFactory(stealList, cc);
 
 			for (Entry<String, Integer> e : takeList.entrySet()) {
 
@@ -1346,7 +1515,7 @@ public class WarehouseCmd extends Command {
 		 * @param storeAmount Specified store amount
 		 * @param itemList    Container contents
 		 */
-		private void store(ItemList storeList, int storeAmount, ItemStack[] itemList) {
+		private void store(ItemList storeList, ContaionerConfig cc, ItemStack[] itemList) {
 
 			// need puts
 			PlayerInventory	inventory	= MC.player.getInventory();
@@ -1355,7 +1524,7 @@ public class WarehouseCmd extends Command {
 
 			putList.retainAll(storeList);
 
-			Function<String, Integer> targetAmountGetter = getAmountFactory(storeList, storeAmount);
+			Function<String, Integer> targetAmountGetter = getAmountFactory(storeList, cc);
 
 			for (Entry<String, Integer> e : putList.entrySet()) {
 
@@ -1454,14 +1623,14 @@ public class WarehouseCmd extends Command {
 		 * the setting of {@link AutoStealHack} to prevent too fast operation.
 		 */
 		private void waitForDelay() {
-			try {
-				Thread.sleep(autoSteal.getDelay());
+			long delay = autoSteal.getDelay();
+			if (delay > 0) try {
+				Thread.sleep(delay);
 			} catch (InterruptedException e) {
 				CrashReport crashReport = CrashReport.create(e, "Thread Sleep");
 				throw new CrashException(crashReport);
 			}
 		}
-
 	}
 
 	/** Running status */
@@ -1483,10 +1652,22 @@ public class WarehouseCmd extends Command {
 
 	}
 
+	/**
+	 * Summarize the warehouse (currently under development)
+	 * <p>
+	 * Container classification display has been implemented
+	 * <p>
+	 * TODO:
+	 * <li>Display status</li>
+	 * <li>Display container status (for scanned containers, display items and
+	 * quantity that can be stored or removed)</li>
+	 * <li>Warehouse list page</li>
+	 * <li>Operation progress</li>
+	 */
 	private static final class SummaryWarehouse implements RenderListener {
 		private final EnumMap<ContaionerType, ArrayList<Box>>	chests	= new EnumMap<>(ContaionerType.class);
-		private VertexBuffer									solidBox;
-		private VertexBuffer									outlinedBox;
+		private final VertexBuffer								solidBox;
+		private final VertexBuffer								outlinedBox;
 
 		public SummaryWarehouse(Config config) {
 
@@ -1581,16 +1762,17 @@ public class WarehouseCmd extends Command {
 
 	}
 
-	private static final SliderSetting	range			= new SliderSetting("Range", 5, 1, 6, 0.05, ValueDisplay.DECIMAL);
+	private static final SliderSetting	RANGE		= new SliderSetting("Range", "Maximum radius to interact with the block", 5, 1, 6, 0.05,
+			ValueDisplay.DECIMAL);
 
-	private static final SliderSetting	timeOut			= new SliderSetting("Time Out", "Maximum delay allowed for interactive operation (unit: ms)", 3000, 100,
+	private static final SliderSetting	TIME_OUT	= new SliderSetting("Time Out", "Maximum delay allowed for interactive operation (unit: ms)", 3000, 100,
 			1000 * 20, 1, ValueDisplay.INTEGER);
 
-	private static final Gson			GSON			= new GsonBuilder().setPrettyPrinting().create();
+	private static final Gson			GSON		= new GsonBuilder().setPrettyPrinting().create();
 
-	private static final String			DEF_GAME_FOLDER	= "default";
+	private static final String			DEF_DIR		= "default";
 
-	private static final Path			FOLDER			= WURST.getWurstFolder().resolve("warehouse");
+	private static final Path			FOLDER		= WURST.getWurstFolder().resolve("warehouse");
 
 	private static Box getBox(BlockEntity blockEntity) {
 
@@ -1659,7 +1841,7 @@ public class WarehouseCmd extends Command {
 	}
 
 	/** Merge String */
-	private static String merge(String[] args, int startIndex) throws CmdException {
+	private static String merge(String[] args, int startIndex) {
 
 		StringJoiner sj = new StringJoiner(" ");
 		while (startIndex < args.length) sj.add(args[startIndex++]);
@@ -1667,12 +1849,12 @@ public class WarehouseCmd extends Command {
 	}
 
 	private final AtomicReference<Status>	status	= new AtomicReference<>(Status.IDLE);
+
 	private Config							config;
 	/** sort helper */
 	private SortWarehouse					sorting;
 	/** sign helper */
 	private SignWarehouse					signing;
-
 	private SummaryWarehouse				summary;
 
 	public WarehouseCmd() {
@@ -1681,15 +1863,18 @@ public class WarehouseCmd extends Command {
 				".warehouse new <name> §7Create a warehouse configuration", //
 				".warehouse load <name> §7Load a warehouse configuration", //
 				".warehouse save [name] §7Save a warehouse configuration", //
-				".warehouse sign <type> [w] [a] [c] §7Enable container tagging", //
+//				".warehouse sign <type> [w] [a] [c] §7Enable container tagging", //
+				".warehouse sign <type> [w] [io] [a] §7Enable container tagging", //
 				".warehouse run §7Start moving items", //
 				".warehouse summary §7Displays the current warehouse summary"//
 		);
 
-		addSetting(range);
-		addSetting(timeOut);
+		addSetting(RANGE);
+		addSetting(TIME_OUT);
 		for (ContaionerType ct : ContaionerType.values()) addSetting(ct.colorSetting);
 		addSetting(SignWarehouse.SEE_COLOR);
+		addSetting(SortWarehouse.GOAL_COLOR);
+		addSetting(SortWarehouse.FLASH_SPEED);
 	}
 
 	@Override
@@ -1742,6 +1927,23 @@ public class WarehouseCmd extends Command {
 		ChatUtils.message("Create a new Config: " + confName);
 	}
 
+	@Override
+	public void doPrimaryAction() {
+
+		WURST.getCmdProcessor().process(getName() + " run");
+
+	}
+
+	@Override
+	public String getPrimaryAction() {
+		return "Start Sorting Warehouse";
+	}
+
+	/** @return the status */
+	public Status getStatus() {
+		return status.get();
+	}
+
 	/**
 	 * load config
 	 *
@@ -1751,7 +1953,7 @@ public class WarehouseCmd extends Command {
 		if (!status.compareAndSet(Status.IDLE, Status.IO)) throw new CmdError("Busy");
 		try {
 			ServerInfo	server	= MC.getCurrentServerEntry();
-			Path		path	= FOLDER.resolve(server == null ? DEF_GAME_FOLDER :				//
+			Path		path	= FOLDER.resolve(server == null ? DEF_DIR :						//
 					(server.online && server.address != null ? server.address : server.name));
 			path = path.resolve(confName);
 			Config conf;
@@ -1791,7 +1993,7 @@ public class WarehouseCmd extends Command {
 		try {
 			if (config == null) throw new CmdError("No configuration file was loaded");
 			ServerInfo	server	= MC.getCurrentServerEntry();
-			Path		path	= FOLDER.resolve(server == null ? DEF_GAME_FOLDER :				//
+			Path		path	= FOLDER.resolve(server == null ? DEF_DIR :						//
 					(server.online && server.address != null ? server.address : server.name));
 
 			try {
@@ -1827,52 +2029,62 @@ public class WarehouseCmd extends Command {
 	 */
 	private void sign(String[] args) throws CmdException {
 		if (status.compareAndSet(Status.IDLE, Status.SIGN)) {
+			try {
+				if (config == null) throw new CmdError("Empty configuration");
 
-			if (config == null) {
+				if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
+						+ ".warehouse sign <type> [w] [io] [a] §7Enable container tagging\n" //
+//						+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
+						+ "type - §7Type of container: produce§a(I)§7/storage§a(O)§7/other§a(T)§7\n"//
+						+ "w - §7Container priority\n"//
+						+ "io- §7Limit quantity type: all/itemList/countList\n"//
+						+ "a - §7Limit quantity:\n"//
+						+ "  §7- For input type, the specified number of items will be retained\n"//
+						+ "  §7- For output type, the specified number of items will be stored at most\n"//
+						+ "  §7- For this quantity:\n"//
+						+ "  §7- A positive number means to limit n items\n"//
+						+ "  §7- A negative number means to limit n groups\n"//
+						+ "  §7- And 0 means to keep the original number of items\n"//
+//						+ "c - §7For output type, whether to take out items that do not belong to this box"//
+				);
+
+				ContaionerType type = ContaionerType.get(args[1]);
+				if (type == null) throw new CmdSyntaxError(ContaionerType.syntax);
+
+				int weight = 0;
+				if (args.length > 2) try {
+					weight = Integer.parseInt(args[2]);
+				} catch (NumberFormatException e) {
+					throw new CmdSyntaxError("Invalid weight: " + args[2]);
+				}
+
+				InOutType ioType = InOutType.ITEM_LIST;
+				if (args.length > 3) {
+					ioType = InOutType.get(args[3]);
+					if (ioType == null) throw new CmdSyntaxError(InOutType.syntax);
+				}
+				if (ioType == InOutType.ALL && type == ContaionerType.OUTPUT) {
+
+					throw new CmdError("Cannot use \"ALL\" io type on \"OUTPUT\" type container, please use \"TEMP\" type");
+
+				}
+
+				int amount = 0;
+				if (args.length > 4) try {
+					amount = Integer.parseInt(args[4]);
+				} catch (NumberFormatException e) {
+					throw new CmdSyntaxError("Invalid amount: " + args[4]);
+				}
+
+				boolean clear = false;
+				if (args.length > 5) clear = hasStr(args[5], "true", "ture", "t", "yes", "y");
+
+				signing = new SignWarehouse(config, status, type, weight, ioType, amount, clear);
+
+			} catch (CmdException e) {
 				status.set(Status.IDLE);
-				throw new CmdError("Empty configuration");
+				throw e;
 			}
-
-			/*
-			 * 限制数量： 对于input型，将会保留指定数量的物品 对于output型，将最多存放指定数量的物品 对于数量:
-			 * 正数表示限制N个，负数表示限制N组，0表示保持物品原数目
-			 */
-			if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
-					+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
-					+ "type - §7Type of container: produce (input) / storage (output)\n"//
-					+ "w - §7Container priority\n"//
-					+ "a - §7Limit quantity:\n"//
-					+ "  §7- For input type, the specified number of items will be retained\n"//
-					+ "  §7- For output type, the specified number of items will be stored at most\n"//
-					+ "  §7- For this quantity:\n"//
-					+ "  §7- A positive number means to limit n items\n"//
-					+ "  §7- A negative number means to limit n groups\n"//
-					+ "  §7- And 0 means to keep the original number of items\n"//
-					+ "c - §7For output type, whether to take out items that do not belong to this box"//
-			);
-
-			ContaionerType type = ContaionerType.get(args[1]);
-			if (type == null) throw new CmdSyntaxError(ContaionerType.syntax);
-
-			int weight = 0;
-			if (args.length > 2) try {
-				weight = Integer.parseInt(args[2]);
-			} catch (NumberFormatException e) {
-				throw new CmdSyntaxError("Invalid weight: " + args[2]);
-			}
-
-			int amount = 0;
-			if (args.length > 3) try {
-				amount = Integer.parseInt(args[3]);
-			} catch (NumberFormatException e) {
-				throw new CmdSyntaxError("Invalid amount: " + args[3]);
-			}
-
-			boolean clear = false;
-			if (args.length > 4) clear = hasStr(args[4], "true", "ture", "t", "yes", "y");
-
-			signing = new SignWarehouse(config, status, type, weight, amount, clear);
-
 		} else if (status.get() == Status.SIGN) {
 
 			try {

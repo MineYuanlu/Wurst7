@@ -21,7 +21,6 @@ import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.event.EventManager;
 import net.wurstclient.events.PacketOutputListener.PacketOutputEvent;
 
-
 @Mixin(ClientPlayNetworkHandler.class)
 public abstract class ClientPlayNetworkHandlerMixin
 	implements ClientPlayPacketListener

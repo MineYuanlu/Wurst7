@@ -51,7 +51,8 @@ public abstract class ShulkerBoxScreenMixin
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
 		
-		if (warehouse.callbackOpenWindow(handler.syncId,rows*9)) return;
+		if (warehouse.callbackOpenWindow(handler.syncId, rows*9)) return;
+
 		
 		if(autoSteal.areButtonsVisible())
 		{

@@ -33,7 +33,7 @@ public abstract class ShulkerBoxScreenMixin
 	private final AutoStealHack autoSteal =
 		WurstClient.INSTANCE.getHax().autoStealHack;
 	private final WarehouseCmd warehouse =
-			WurstClient.INSTANCE.getCmds().warehouseCmd;
+		WurstClient.INSTANCE.getCmds().warehouseCmd;
 	private int mode;
 	
 	public ShulkerBoxScreenMixin(WurstClient wurst,

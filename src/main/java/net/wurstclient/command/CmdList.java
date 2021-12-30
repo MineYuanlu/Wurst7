@@ -64,6 +64,8 @@ public final class CmdList
 	public final UnbindCmd unbindCmd = new UnbindCmd();
 	public final VClipCmd vClipCmd = new VClipCmd();
 	public final ViewNbtCmd viewNbtCmd = new ViewNbtCmd();
+	public final WarehouseCmd warehouseCmd = new WarehouseCmd();
+
 	
 	private final TreeMap<String, Command> cmds =
 		new TreeMap<>(String::compareToIgnoreCase);

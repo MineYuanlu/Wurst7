@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -305,6 +306,10 @@ public class WarehouseCmd extends Command {
 		}
 
 		private static final GoToHelper INSTANCE = new GoToHelper();
+
+		public static void stop() {
+			INSTANCE.disable(false);
+		}
 
 		public static void goTo(BlockPos goal, Consumer<Boolean> callback) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
@@ -765,6 +770,8 @@ public class WarehouseCmd extends Command {
 
 				ChatUtils.message("A container has been removed from " + (cc == contaionerConfig ? "now signing" : cc));
 
+				if (summary != null) summary.update();
+
 				return;
 			}
 
@@ -826,14 +833,15 @@ public class WarehouseCmd extends Command {
 
 		private final LinkedHashMap<BlockPos, ContaionerConfig>	contaioners;
 		private final AtomicReference<Status>					status;
+
 		/** Waiting container */
 		private CompletableFuture<ItemStack[]>					waitingChest;
 		private Integer											waitingSyncId;
-
 		private int												waitingSize;
 
 		/** Container in use */
 		private int												nowSyncId;
+
 		/** next call task */
 		private Runnable										next;
 		private String											nextName;
@@ -945,6 +953,18 @@ public class WarehouseCmd extends Command {
 			}
 		}
 
+		/** Compare the distance between the pos and the player */
+		private static final Comparator<BlockPos> COMPARATOR_DISTANCE = //
+				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos(), false));
+
+		private Stream<Entry<BlockPos, ContaionerConfig>> getSorted(Stream<Entry<BlockPos, ContaionerConfig>> stream) {
+			return stream.sorted((l, r) -> {
+				int ccCmp = l.getValue().compareTo(r.getValue());
+				if (ccCmp != 0) return ccCmp;
+				return COMPARATOR_DISTANCE.compare(l.getKey(), r.getKey());
+			});
+		}
+
 		/**
 		 * Look for an input container that is not explicitly empty, go to scan, and
 		 * then take out the items.
@@ -952,8 +972,11 @@ public class WarehouseCmd extends Command {
 		private void doInput() {
 			if (stop) return;
 			status.set(Status.RUNNING);
-			Entry<BlockPos, ContaionerConfig> next = contaioners.entrySet().stream()//
-					.filter(e -> e.getValue().type == ContaionerType.INPUT)//
+			var	stream	= contaioners											//
+					.entrySet().stream()										//
+					.filter(e -> e.getValue().type == ContaionerType.INPUT)		//
+			;
+			var	next	= getSorted(stream)										//
 					.findFirst().orElse(null);
 
 			if (next == null) {
@@ -995,11 +1018,14 @@ public class WarehouseCmd extends Command {
 		private void doOutput() {
 			if (stop) return;
 			status.set(Status.RUNNING);
-			PlayerInventory						inv		= MC.player.getInventory();
-			Entry<BlockPos, ContaionerConfig>	next	= contaioners												//
+			PlayerInventory	inv		= MC.player.getInventory();
+
+			var				stream	= contaioners																	//
 					.entrySet().stream()																			//
 					.filter(e -> e.getValue().type == ContaionerType.OUTPUT)										//
 					.filter(e -> e.getValue().blocks.get(e.getKey()).hasCanOutput(inv, posCache.get(e.getKey())))	//
+			;
+			var				next	= getSorted(stream)																//
 					.findFirst().orElse(null);																		//
 
 			if (next == null) {
@@ -1042,11 +1068,15 @@ public class WarehouseCmd extends Command {
 		private void doTemp() {
 			if (stop) return;
 			status.set(Status.RUNNING);
-			PlayerInventory						inv		= MC.player.getInventory();
-			Entry<BlockPos, ContaionerConfig>	next	= contaioners.entrySet().stream()							//
+			PlayerInventory	inv		= MC.player.getInventory();
+
+			var				stream	= contaioners																	//
+					.entrySet().stream()																			//
 					.filter(e -> e.getValue().type == ContaionerType.TEMP)											//
 					.filter(e -> posCache.get(e.getKey()) == null || posCache.get(e.getKey()).hasCanInput(inv))		//
-					.findFirst().orElse(null);																		//
+			;
+			var				next	= getSorted(stream)																//
+					.findFirst().orElse(null);
 
 			if (next == null) {
 				ChatUtils.error("All temporary containers are full, cannot continue.");
@@ -1080,6 +1110,7 @@ public class WarehouseCmd extends Command {
 
 		public void exit() {
 			stop = true;
+			GoToHelper.stop();
 		}
 
 		/** @return success */
@@ -1094,7 +1125,7 @@ public class WarehouseCmd extends Command {
 			CompletableFuture<Boolean> future = new CompletableFuture<>();
 			GoToHelper.goTo(pos, future::complete);
 			try {
-				return future.get();
+				return future.get() && !stop;
 			} catch (Throwable e) {
 				CrashReport crashReport = CrashReport.create(e, "Goto Future Waiting");
 				throw new CrashException(crashReport);

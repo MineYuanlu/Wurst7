@@ -863,7 +863,8 @@ public class WarehouseCmd extends Command {
 				"During sorting, the identification color of the container location of the next interaction", Color.blue);
 		private static final CheckboxSetting		SKIP_INVALID		= new CheckboxSetting("skip invalid chest",
 				"Whether to skip the target container when it cannot be opened.", false);
-
+		private static final CheckboxSetting		GO_BACK				= new CheckboxSetting("go back",
+				"Whether to return to the starting point after sorting.", false);
 		/** Compare the distance between the pos and the player */
 		private static final Comparator<BlockPos>	COMPARATOR_DISTANCE	=													//
 				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos(), false));
@@ -936,6 +937,8 @@ public class WarehouseCmd extends Command {
 				cc.blocks.keySet().forEach(pos -> this.contaioners.put(pos, cc));
 			});
 
+			final BlockPos startPos = MC.player.getBlockPos();
+
 			WarehouseCmd.containerCache = containerCache;
 
 			setNext(this::startOnce, "start");
@@ -952,9 +955,16 @@ public class WarehouseCmd extends Command {
 							task.run();
 
 						}
+						if (!stop && GO_BACK.isChecked()) {
+							ChatUtils.message("Done. Now go back to the starting point.");
+							goTo(startPos);
+						} else {
+							ChatUtils.message("Done.");
+						}
 						System.out.println("Finish!");
 					} catch (Throwable e) {
 						ChatUtils.error("An error occurred: " + e);
+						e.printStackTrace();
 					} finally {
 						status.set(Status.IDLE);
 					}
@@ -1031,8 +1041,7 @@ public class WarehouseCmd extends Command {
 					.findFirst().orElse(null);
 
 			if (next == null) {
-				if (isInvEmpty(true)) ChatUtils.message("Done.");
-				else setNext(this::doOutput, "Output - by No Input");
+				if (!isInvEmpty(true)) setNext(this::doOutput, "Output - by No Input");
 				return;
 			}
 
@@ -2157,6 +2166,7 @@ public class WarehouseCmd extends Command {
 		addSetting(RANGE);
 		addSetting(TIME_OUT);
 		addSetting(SortWarehouse.SKIP_INVALID);
+		addSetting(SortWarehouse.GO_BACK);
 		for (ContaionerType ct : ContaionerType.values()) addSetting(ct.colorSetting);
 		addSetting(SignWarehouse.SEE_COLOR);
 		addSetting(SortWarehouse.GOAL_COLOR);

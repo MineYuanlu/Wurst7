@@ -2088,10 +2088,11 @@ public class WarehouseCmd extends Command {
 				".warehouse load <name> §7Load a warehouse configuration", //
 				".warehouse save [name] §7Save a warehouse configuration", //
 //				".warehouse sign <type> [w] [a] [c] §7Enable container tagging", //
-				".warehouse sign <type> [w] [io] [a] §7Enable container tagging", //
+				".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode", //
 				".warehouse run §7Start moving items", //
 				".warehouse summary §7Displays the current warehouse summary", //
-				".warehouse where §7Displays which container has items similar to hand item"//
+				".warehouse where §7Displays which container has items similar to hand item", //
+				"§7https://github.com/MineYuanlu/Wurst7/wiki/Warehouse"//
 		);
 
 		addSetting(RANGE);
@@ -2284,18 +2285,13 @@ public class WarehouseCmd extends Command {
 				if (config == null) throw new CmdError("Empty configuration");
 
 				if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
-						+ ".warehouse sign <type> [w] [io] [a] §7Enable container tagging\n" //
+						+ ".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode\n" //
 //						+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
 						+ "type - §7Type of container: produce§a(I)§7/storage§a(O)§7/other§a(T)§7\n"//
-						+ "w - §7Container priority\n"//
-						+ "io- §7Limit quantity type: all/itemList/countList\n"//
-						+ "a - §7Limit quantity:\n"//
-						+ "  §7- For input type, the specified number of items will be retained\n"//
-						+ "  §7- For output type, the specified number of items will be stored at most\n"//
-						+ "  §7- For this quantity:\n"//
-						+ "  §7- A positive number means to limit n items\n"//
-						+ "  §7- A negative number means to limit n groups\n"//
-						+ "  §7- And 0 means to keep the original number of items\n"//
+						+ "priority - §7Container priority\n"//
+						+ "maxAmountMode - §7Limit quantity type: all/itemList/countList/outputList\n"//
+						+ "maxAmount - §7Limit quantity"//
+						+ "§7https://github.com/MineYuanlu/Wurst7/wiki/Warehouse#how-to-use-sign-mode"
 //						+ "c - §7For output type, whether to take out items that do not belong to this box"//
 				);
 

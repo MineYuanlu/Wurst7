@@ -30,6 +30,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.lwjgl.opengl.GL11;
@@ -152,6 +153,27 @@ public class WarehouseCmd extends Command {
 			allArea = new Box(mins[0], mins[1], mins[2], maxs[0] + 1, maxs[1] + 1, maxs[2] + 1);
 		}
 
+		public void calculateOutputList() {
+			Supplier<ItemList> itemlist = new Supplier<>() {
+				private ItemList item;
+
+				@Override
+				public ItemList get() {
+					if (item != null) return item;
+					item = new ItemList();
+					contaioners.stream()//
+							.filter(cc -> cc.type != ContaionerType.OUTPUT)//
+							.flatMap(cc -> cc.blocks.values().stream())//
+							.forEach(item::putAll);
+					;
+					item.normalize();
+					return item;
+				}
+			};
+
+			contaioners.forEach(cc -> cc.flush(itemlist));
+		}
+
 		public void dumpBlocks() {
 			cacheBlocks.clear();
 			for (ContaionerConfig cc : contaioners) cc.blocks.keySet().forEach(pos -> cacheBlocks.put(pos, cc));
@@ -161,6 +183,7 @@ public class WarehouseCmd extends Command {
 		public void flush() {
 			dumpBlocks();
 			calculateArea();
+			calculateOutputList();
 		}
 
 		public JsonElement serialize() {
@@ -222,6 +245,18 @@ public class WarehouseCmd extends Command {
 
 		public boolean configEquals(ContaionerConfig cc) {
 			return cc.type == type && cc.weight == weight && cc.amount == amount && cc.clear == clear;
+		}
+
+		/**
+		 * 
+		 */
+		private void flush(Supplier<ItemList> itemSupplier) {
+			if (ioType == InOutType.OUTPUT_LIST) {
+
+				ItemList itemList = itemSupplier.get();
+				blocks.replaceAll((pos, old) -> itemList);
+
+			}
 		}
 
 		public void mergeTo(ContaionerConfig cc) {
@@ -307,10 +342,6 @@ public class WarehouseCmd extends Command {
 
 		private static final GoToHelper INSTANCE = new GoToHelper();
 
-		public static void stop() {
-			INSTANCE.disable(false);
-		}
-
 		public static void goTo(BlockPos goal, Consumer<Boolean> callback) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
 			INSTANCE.pathFinder	= new NearFinder(goal);
@@ -322,6 +353,10 @@ public class WarehouseCmd extends Command {
 			INSTANCE.enabled		= true;
 			EVENTS.add(UpdateListener.class, INSTANCE);
 			EVENTS.add(RenderListener.class, INSTANCE);
+		}
+
+		public static void stop() {
+			INSTANCE.disable(false);
 		}
 
 		private PathFinder			pathFinder;
@@ -434,17 +469,23 @@ public class WarehouseCmd extends Command {
 		 * to be stored in that container, which is unable to achieve the purpose of
 		 * classification. Please use the "TEMP" container type.</i>
 		 */
-		ALL(false, "Access all item", "all", "a"),
+		ALL(false, ContaionerType.OUTPUT, "Access all item", "all", "a"),
 		/**
 		 * Use the list of items at the time of scanning and take out / store according
 		 * to the additional specified amount
 		 */
-		ITEM_LIST(true, "Use list as item list", "item", "i", "il"),
+		ITEM_LIST(true, (ContaionerType) null, "Use list as item list", "item", "i", "il"),
 		/**
 		 * Use the list of items at the time of scanning and its count, which will keep
 		 * the number of items in the list at the time of scanning.
 		 */
-		COUNT_LIST(true, "Use list as item and count list", "count", "c", "cl");
+		COUNT_LIST(true, (ContaionerType) null, "Use list as item and count list", "count", "c", "cl"),
+		/**
+		 * Scan all available output containers and automatically calculate the list of
+		 * items to be taken (but the quantity will not be calculated)
+		 */
+		OUTPUT_LIST(true, new ContaionerType[] { ContaionerType.TEMP, ContaionerType.OUTPUT }, "Use a list of storable items", "output", "o", "ol");
+		;
 
 		public static final String		syntax;
 		public static final InOutType[]	BY_ID	= values();
@@ -460,13 +501,24 @@ public class WarehouseCmd extends Command {
 		}
 
 		private final boolean	useList;
+		private final boolean[]	reject;
 		private final String	description;
 		private final String[]	matchs;
 
-		InOutType(boolean useList, String description, String... matchs) {
-			this.useList		= useList;
+		InOutType(boolean useList, ContaionerType reject, String description, String... matchs) {
+			this(useList, reject == null ? new ContaionerType[0] : new ContaionerType[] { reject }, description, matchs);
+		}
+
+		InOutType(boolean useList, ContaionerType[] reject, String description, String... matchs) {
+			this.useList	= useList;
+			this.reject		= new boolean[ContaionerType.BY_ID.length];
+			for (ContaionerType ct : reject) this.reject[ct.ordinal()] = true;
 			this.description	= String.join("/", matchs) + ": " + description;
 			this.matchs			= matchs;
+		}
+
+		public boolean reject(ContaionerType type) {
+			return reject[type.ordinal()];
 		}
 
 	}
@@ -587,6 +639,13 @@ public class WarehouseCmd extends Command {
 			if (cache != null) stream = stream.filter(name -> Objects.requireNonNullElse(cache.get(name), 0) > 0);
 
 			return stream.anyMatch(this::containsKey);
+		}
+
+		/**
+		 * Set all item amounts in the list to 1
+		 */
+		public void normalize() {
+			replaceAll((item, amount) -> 1);
 		}
 
 		public void retainAll(ItemList itemList) {
@@ -800,10 +859,15 @@ public class WarehouseCmd extends Command {
 	 * @author yuanlu
 	 */
 	private static final class SortWarehouse implements UpdateListener, RenderListener {
-		private static final ColorSetting		GOAL_COLOR		= new ColorSetting("goal color",
+		private static final ColorSetting			GOAL_COLOR			= new ColorSetting("goal color",
 				"During sorting, the identification color of the container location of the next interaction", Color.blue);
-		private static final CheckboxSetting	SKIP_INVALID	= new CheckboxSetting("skip invalid chest",
+		private static final CheckboxSetting		SKIP_INVALID		= new CheckboxSetting("skip invalid chest",
 				"Whether to skip the target container when it cannot be opened.", false);
+		private static final CheckboxSetting		GO_BACK				= new CheckboxSetting("go back",
+				"Whether to return to the starting point after sorting.", false);
+		/** Compare the distance between the pos and the player */
+		private static final Comparator<BlockPos>	COMPARATOR_DISTANCE	=													//
+				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos(), false));
 
 		/**
 		 * Construct a function to return the required quantity of a specified item in
@@ -830,31 +894,31 @@ public class WarehouseCmd extends Command {
 		}
 
 		private final AutoStealHack								autoSteal		= WURST.getHax().autoStealHack;
-
 		private final LinkedHashMap<BlockPos, ContaionerConfig>	contaioners;
-		private final AtomicReference<Status>					status;
 
+		private final AtomicReference<Status>					status;
 		/** Waiting container */
 		private CompletableFuture<ItemStack[]>					waitingChest;
 		private Integer											waitingSyncId;
+
 		private int												waitingSize;
 
 		/** Container in use */
 		private int												nowSyncId;
-
 		/** next call task */
 		private Runnable										next;
+
 		private String											nextName;
 
 		private boolean											stop;
 
 		/** close callback */
 		private CompletableFuture<Boolean>						screenCloseListener;
-
 		/** The number of items need to stored in the specified container. */
 		private final HashMap<BlockPos, ItemList>				posCache		= Maps.newHashMap();
 		/** Container content cache */
 		private final Map<BlockPos, ItemList>					containerCache	= Maps.newLinkedHashMap();
+
 		private Box												goalBox;
 
 		private long											renderSwitchLast;
@@ -873,6 +937,8 @@ public class WarehouseCmd extends Command {
 				cc.blocks.keySet().forEach(pos -> this.contaioners.put(pos, cc));
 			});
 
+			final BlockPos startPos = MC.player.getBlockPos();
+
 			WarehouseCmd.containerCache = containerCache;
 
 			setNext(this::startOnce, "start");
@@ -889,9 +955,16 @@ public class WarehouseCmd extends Command {
 							task.run();
 
 						}
+						if (!stop && GO_BACK.isChecked()) {
+							ChatUtils.message("Done. Now go back to the starting point.");
+							goTo(startPos);
+						} else {
+							ChatUtils.message("Done.");
+						}
 						System.out.println("Finish!");
 					} catch (Throwable e) {
 						ChatUtils.error("An error occurred: " + e);
+						e.printStackTrace();
 					} finally {
 						status.set(Status.IDLE);
 					}
@@ -953,18 +1026,6 @@ public class WarehouseCmd extends Command {
 			}
 		}
 
-		/** Compare the distance between the pos and the player */
-		private static final Comparator<BlockPos> COMPARATOR_DISTANCE = //
-				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos(), false));
-
-		private Stream<Entry<BlockPos, ContaionerConfig>> getSorted(Stream<Entry<BlockPos, ContaionerConfig>> stream) {
-			return stream.sorted((l, r) -> {
-				int ccCmp = l.getValue().compareTo(r.getValue());
-				if (ccCmp != 0) return ccCmp;
-				return COMPARATOR_DISTANCE.compare(l.getKey(), r.getKey());
-			});
-		}
-
 		/**
 		 * Look for an input container that is not explicitly empty, go to scan, and
 		 * then take out the items.
@@ -980,8 +1041,7 @@ public class WarehouseCmd extends Command {
 					.findFirst().orElse(null);
 
 			if (next == null) {
-				if (isInvEmpty(true)) ChatUtils.message("Done.");
-				else setNext(this::doOutput, "Output - by No Input");
+				if (!isInvEmpty(true)) setNext(this::doOutput, "Output - by No Input");
 				return;
 			}
 
@@ -1111,6 +1171,14 @@ public class WarehouseCmd extends Command {
 		public void exit() {
 			stop = true;
 			GoToHelper.stop();
+		}
+
+		private Stream<Entry<BlockPos, ContaionerConfig>> getSorted(Stream<Entry<BlockPos, ContaionerConfig>> stream) {
+			return stream.sorted((l, r) -> {
+				int ccCmp = l.getValue().compareTo(r.getValue());
+				if (ccCmp != 0) return ccCmp;
+				return COMPARATOR_DISTANCE.compare(l.getKey(), r.getKey());
+			});
 		}
 
 		/** @return success */
@@ -2088,15 +2156,17 @@ public class WarehouseCmd extends Command {
 				".warehouse load <name> §7Load a warehouse configuration", //
 				".warehouse save [name] §7Save a warehouse configuration", //
 //				".warehouse sign <type> [w] [a] [c] §7Enable container tagging", //
-				".warehouse sign <type> [w] [io] [a] §7Enable container tagging", //
+				".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode", //
 				".warehouse run §7Start moving items", //
 				".warehouse summary §7Displays the current warehouse summary", //
-				".warehouse where §7Displays which container has items similar to hand item"//
+				".warehouse where §7Displays which container has items similar to hand item", //
+				"§7https://github.com/MineYuanlu/Wurst7/wiki/Warehouse"//
 		);
 
 		addSetting(RANGE);
 		addSetting(TIME_OUT);
 		addSetting(SortWarehouse.SKIP_INVALID);
+		addSetting(SortWarehouse.GO_BACK);
 		for (ContaionerType ct : ContaionerType.values()) addSetting(ct.colorSetting);
 		addSetting(SignWarehouse.SEE_COLOR);
 		addSetting(SortWarehouse.GOAL_COLOR);
@@ -2284,18 +2354,13 @@ public class WarehouseCmd extends Command {
 				if (config == null) throw new CmdError("Empty configuration");
 
 				if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
-						+ ".warehouse sign <type> [w] [io] [a] §7Enable container tagging\n" //
+						+ ".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode\n" //
 //						+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
 						+ "type - §7Type of container: produce§a(I)§7/storage§a(O)§7/other§a(T)§7\n"//
-						+ "w - §7Container priority\n"//
-						+ "io- §7Limit quantity type: all/itemList/countList\n"//
-						+ "a - §7Limit quantity:\n"//
-						+ "  §7- For input type, the specified number of items will be retained\n"//
-						+ "  §7- For output type, the specified number of items will be stored at most\n"//
-						+ "  §7- For this quantity:\n"//
-						+ "  §7- A positive number means to limit n items\n"//
-						+ "  §7- A negative number means to limit n groups\n"//
-						+ "  §7- And 0 means to keep the original number of items\n"//
+						+ "priority - §7Container priority\n"//
+						+ "maxAmountMode - §7Limit quantity type: all/itemList/countList/outputList\n"//
+						+ "maxAmount - §7Limit quantity"//
+						+ "§7https://github.com/MineYuanlu/Wurst7/wiki/Warehouse#how-to-use-sign-mode"
 //						+ "c - §7For output type, whether to take out items that do not belong to this box"//
 				);
 
@@ -2314,13 +2379,14 @@ public class WarehouseCmd extends Command {
 					ioType = InOutType.get(args[3]);
 					if (ioType == null) throw new CmdSyntaxError(InOutType.syntax);
 				}
-				if (ioType == InOutType.ALL && type == ContaionerType.OUTPUT) {
 
-					throw new CmdError("Cannot use \"ALL\" io type on \"OUTPUT\" type container, please use \"TEMP\" type");
+				if (ioType.reject(type)) {
+
+					throw new CmdError("Cannot use \"" + ioType + "\" io type on \"" + type + "\" type container!");
 
 				}
 
-				int amount = 0;
+				int amount = type == ContaionerType.OUTPUT ? -54 : 0;
 				if (args.length > 4) try {
 					amount = Integer.parseInt(args[4]);
 				} catch (NumberFormatException e) {

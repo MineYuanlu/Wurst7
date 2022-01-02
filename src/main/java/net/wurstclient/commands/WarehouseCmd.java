@@ -1175,7 +1175,7 @@ public class WarehouseCmd extends Command {
 
 		private Stream<Entry<BlockPos, ContaionerConfig>> getSorted(Stream<Entry<BlockPos, ContaionerConfig>> stream) {
 			return stream.sorted((l, r) -> {
-				int ccCmp = l.getValue().compareTo(r.getValue());
+				int ccCmp = r.getValue().compareTo(l.getValue());// 反向排序 Reverse sort
 				if (ccCmp != 0) return ccCmp;
 				return COMPARATOR_DISTANCE.compare(l.getKey(), r.getKey());
 			});
@@ -2179,17 +2179,17 @@ public class WarehouseCmd extends Command {
 	public void call(String[] args) throws CmdException {
 		if (args.length == 0) throw new CmdSyntaxError();
 		renderInit();
-		switch (args[0]) {
-		case "new" -> createConf(merge(args, 1));
-		case "load" -> {
+		switch (args[0].toLowerCase()) {
+		case "new", "n" -> createConf(merge(args, 1));
+		case "load", "l" -> {
 			if (args.length <= 1) throw new CmdSyntaxError("Missing parameter");
 			loadConf(merge(args, 1));
 		}
-		case "save" -> saveConf(merge(args, 1));
-		case "sign" -> sign(args);
-		case "run" -> run();
+		case "save", "s" -> saveConf(merge(args, 1));
+		case "markmode", "m", "sign" -> sign(args);
+		case "run", "r" -> run();
 		case "summary" -> summary();
-		case "where" -> where();
+		case "where", "item" -> where();
 		default -> throw new CmdSyntaxError("Unknown subcommand: " + args[0]);
 		}
 	}

@@ -878,6 +878,7 @@ public class WarehouseCmd extends Command {
 			switch (cc.ioType) {
 			case ALL:
 			case ITEM_LIST:
+			case OUTPUT_LIST:
 				if (configAmount > 0) {
 					// amount
 					return name -> configAmount;

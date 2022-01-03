@@ -1767,7 +1767,7 @@ public class WarehouseCmd extends Command {
 		private final EnumMap<ContaionerType, ArrayList<Box>>	chests	= new EnumMap<>(ContaionerType.class);
 		private final Config									config;
 
-		public SummaryWarehouse(Config config) {
+		public SummaryWarehouse(Config config, boolean silent) {
 
 			config.flush();
 			this.config = config;
@@ -1781,13 +1781,13 @@ public class WarehouseCmd extends Command {
 
 			EVENTS.add(RenderListener.class, this);
 
-			ChatUtils.message("Enter summary mode");
+			if (!silent) ChatUtils.message("Enter summary mode");
 		}
 
-		public void exit() {
+		public void exit(boolean silent) {
 			EVENTS.remove(RenderListener.class, this);
 
-			ChatUtils.message("Exit summary mode");
+			if (!silent) ChatUtils.message("Exit summary mode");
 		}
 
 		@Override
@@ -1857,7 +1857,7 @@ public class WarehouseCmd extends Command {
 		private long										renderSwitchLast;
 		private boolean										renderSwitch;
 
-		public WhereWarehouse(Config config) {
+		public WhereWarehouse(Config config, boolean silent) {
 
 			config.flush();
 
@@ -1880,12 +1880,14 @@ public class WarehouseCmd extends Command {
 			EVENTS.add(RenderListener.class, this);
 			EVENTS.add(UpdateListener.class, this);
 
-			ChatUtils.message("Enter summary mode");
+			if (!silent) ChatUtils.message("Enter where mode");
 		}
 
-		public void exit() {
+		public void exit(boolean silent) {
 			EVENTS.remove(RenderListener.class, this);
 			EVENTS.remove(UpdateListener.class, this);
+
+			if (!silent) ChatUtils.message("Exit where mode");
 		}
 
 		@Override
@@ -2268,12 +2270,21 @@ public class WarehouseCmd extends Command {
 			}
 			config = conf;
 			ChatUtils.message("Config loaded: " + confName);
+
 			SummaryWarehouse summaryWarehouse = WarehouseCmd.summary;
 			if (summaryWarehouse != null) {
 				summary = null;
-				summaryWarehouse.exit();
-				summary = new SummaryWarehouse(conf);
+				summaryWarehouse.exit(true);
+				summary = new SummaryWarehouse(conf, true);
 			}
+
+			WhereWarehouse whereWarehouse = WarehouseCmd.where;
+			if (whereWarehouse != null) {
+				where = null;
+				whereWarehouse.exit(true);
+				where = new WhereWarehouse(conf, true);
+			}
+
 		} finally {
 			containerCache = null;
 			status.set(Status.IDLE);
@@ -2419,14 +2430,14 @@ public class WarehouseCmd extends Command {
 		if (summaryWarehouse != null) {
 
 			summary = null;
-			summaryWarehouse.exit();
+			summaryWarehouse.exit(false);
 
 		} else {
 
 			Config config = this.config;
 			if (config == null) throw new CmdError("Empty configuration");
 
-			summary = new SummaryWarehouse(config);
+			summary = new SummaryWarehouse(config, false);
 
 		}
 	}
@@ -2436,14 +2447,14 @@ public class WarehouseCmd extends Command {
 
 			WhereWarehouse whereWarehouse = where;
 			where = null;
-			whereWarehouse.exit();
+			whereWarehouse.exit(false);
 
 		} else {
 
 			Config config = this.config;
 			if (config == null) throw new CmdError("Empty configuration");
 
-			where = new WhereWarehouse(config);
+			where = new WhereWarehouse(config, false);
 
 		}
 	}

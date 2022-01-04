@@ -76,6 +76,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.Vec3i;
 import net.minecraft.util.registry.Registry;
 import net.wurstclient.SearchTags;
 import net.wurstclient.ai.PathFinder;
@@ -338,8 +339,10 @@ public class WarehouseCmd extends Command {
 
 			@Override
 			protected boolean checkDone() {
-				double	range	= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
-				double	disSqu	= current.getSquaredDistance(getGoal());
+				double	range		= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
+				double	eyeY		= MC.player.getEyeHeight(MC.player.getPose());
+				Vec3i	currentEye	= new Vec3i(current.getX(), (int) (current.getY() + eyeY), current.getZ());
+				double	disSqu		= currentEye.getSquaredDistance(getGoal());
 				return done = disSqu < range * range;
 			}
 

@@ -4,6 +4,8 @@
 package net.wurstclient.commands;
 
 import java.awt.Color;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.Serial;
 import java.io.Writer;
 import java.nio.file.Files;
@@ -22,6 +24,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -31,6 +34,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.lwjgl.opengl.GL11;
@@ -72,6 +76,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.Vec3i;
 import net.minecraft.util.registry.Registry;
 import net.wurstclient.SearchTags;
 import net.wurstclient.ai.PathFinder;
@@ -93,6 +98,7 @@ import net.wurstclient.util.BlockUtils;
 import net.wurstclient.util.ChatUtils;
 import net.wurstclient.util.RenderUtils;
 import net.wurstclient.util.RotationUtils;
+import net.wurstclient.util.json.JsonException;
 import net.wurstclient.util.json.JsonUtils;
 
 /**
@@ -333,8 +339,10 @@ public class WarehouseCmd extends Command {
 
 			@Override
 			protected boolean checkDone() {
-				double	range	= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
-				double	disSqu	= current.getSquaredDistance(getGoal());
+				double	range		= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
+				double	eyeY		= MC.player.getEyeHeight(MC.player.getPose());
+				Vec3i	currentEye	= new Vec3i(current.getX(), (int) (current.getY() + eyeY), current.getZ());
+				double	disSqu		= currentEye.getSquaredDistance(getGoal());
 				return done = disSqu < range * range;
 			}
 
@@ -526,13 +534,31 @@ public class WarehouseCmd extends Command {
 	/**
 	 * Record item information (only save item name + item count)
 	 */
-	private static final class ItemList extends LinkedHashMap<String, Integer> {
+	private static final class ItemList extends LinkedHashMap<String, Integer> implements Cloneable {
 		@Serial private static final long serialVersionUID = -814964946466372693L;
 
 		public static ItemList deserialize(JsonElement element) {
 			ItemList list = new ItemList();
 			element.getAsJsonObject().entrySet().forEach(e -> list.put(e.getKey(), e.getValue().getAsInt()));
 			return list;
+		}
+
+		@Override
+		public ItemList clone() {
+			ItemList itemList = new ItemList();
+			forEach(itemList::put);
+			return itemList;
+		}
+
+		/**
+		 * Gets a list of all item amounts that have been set to 1
+		 * 
+		 * @return itemList
+		 */
+		public static ItemList normalize(Collection<String> items) {
+			ItemList itemList = new ItemList();
+			items.forEach(item -> itemList.put(item, 1));
+			return itemList;
 		}
 
 		/**
@@ -680,24 +706,30 @@ public class WarehouseCmd extends Command {
 
 		private final AtomicReference<Status>	status;
 
+		private final ItemList					template;
+
 		/**
 		 * Marking containers
 		 *
-		 * @param config Overall config
-		 * @param status status
-		 * @param type   Represents the container type
-		 * @param weight priority
-		 * @param amount Maximum put in quantity (when putting in) / minimum reserved
-		 *               quantity (when extracting)<br>
-		 *               When the number is negative, the unit is grouped
-		 * @param clear  When the type is output container, do you want to remove other
-		 *               items not in this container classification list
+		 * @param config   Overall config
+		 * @param status   status
+		 * @param template Item list template to use
+		 * @param type     Represents the container type
+		 * @param weight   priority
+		 * @param amount   Maximum put in quantity (when putting in) / minimum reserved
+		 *                 quantity (when extracting)<br>
+		 *                 When the number is negative, the unit is grouped
+		 * @param clear    When the type is output container, do you want to remove
+		 *                 other items not in this container classification list
 		 * @param ioType
 		 */
-		public SignWarehouse(Config config, AtomicReference<Status> status, ContaionerType type, int weight, InOutType ioType, int amount, boolean clear) {
+		public SignWarehouse(Config config, AtomicReference<Status> status, TemplateWarehouse template, ContaionerType type, int weight, InOutType ioType,
+				int amount, boolean clear) {
 
 			this.config			= Objects.requireNonNull(config, "config");
 			this.status			= Objects.requireNonNull(status, "status");
+
+			this.template		= template == null ? null : template.toItemList();
 
 			contaionerConfig	= new ContaionerConfig(type, weight, ioType, amount, clear);
 			ChestESP_enable		= WURST.getHax().chestEspHack.isEnabled();
@@ -710,6 +742,15 @@ public class WarehouseCmd extends Command {
 			ChatUtils.message("Enter sign mode");
 		}
 
+		private void addChest(BlockPos pos, ItemList itemList) {
+
+			contaionerConfig.blocks.put(waitingChest, itemList);
+			config.cacheBlocks.put(waitingChest, contaionerConfig);
+
+			if (summary != null) summary.update();
+
+		}
+
 		public synchronized void callbackInventory(List<ItemStack> items, int syncId) {
 			if ((waitingSyncId == null) || (waitingSyncId != syncId)) return;
 
@@ -720,10 +761,7 @@ public class WarehouseCmd extends Command {
 					.filter(stack -> !stack.isEmpty())//
 					.forEach(list::add);
 
-			contaionerConfig.blocks.put(waitingChest, list);
-			config.cacheBlocks.put(waitingChest, contaionerConfig);
-
-			if (summary != null) summary.update();
+			addChest(waitingChest, list);
 
 			waitingChest	= null;
 			waitingSyncId	= null;
@@ -751,9 +789,6 @@ public class WarehouseCmd extends Command {
 			return true;
 		}
 
-		/**
-		 *
-		 */
 		public void exit() {
 
 			EVENTS.remove(UpdateListener.class, this);
@@ -811,6 +846,15 @@ public class WarehouseCmd extends Command {
 					|| blockEntity instanceof ShulkerBoxBlockEntity //
 					|| blockEntity instanceof BarrelBlockEntity))
 				return;
+
+			if (template != null) {
+
+				addChest(pos, template.clone());
+				ChatUtils.message("Successfully marked this container with the template.");
+
+				return;
+
+			}
 
 			if (waitingChest != null) {
 
@@ -1767,7 +1811,7 @@ public class WarehouseCmd extends Command {
 		private final EnumMap<ContaionerType, ArrayList<Box>>	chests	= new EnumMap<>(ContaionerType.class);
 		private final Config									config;
 
-		public SummaryWarehouse(Config config) {
+		public SummaryWarehouse(Config config, boolean silent) {
 
 			config.flush();
 			this.config = config;
@@ -1781,13 +1825,13 @@ public class WarehouseCmd extends Command {
 
 			EVENTS.add(RenderListener.class, this);
 
-			ChatUtils.message("Enter summary mode");
+			if (!silent) ChatUtils.message("Enter summary mode");
 		}
 
-		public void exit() {
+		public void exit(boolean silent) {
 			EVENTS.remove(RenderListener.class, this);
 
-			ChatUtils.message("Exit summary mode");
+			if (!silent) ChatUtils.message("Exit summary mode");
 		}
 
 		@Override
@@ -1837,6 +1881,87 @@ public class WarehouseCmd extends Command {
 	}
 
 	/**
+	 * Template warehouse<br>
+	 * Preset a variety of item lists
+	 */
+	private static final class TemplateWarehouse {
+		private static final TreeMap<String, TemplateWarehouse>	DEFAULT	= new TreeMap<>();
+		private static final TreeMap<String, TemplateWarehouse>	USER	= new TreeMap<>();
+		private static final Path								FOLDER	= WarehouseCmd.FOLDER.resolve("template");
+
+		static {
+			/** TODO add default template here */
+			addDefault("stone", //
+					"stone", "granite", "polished_granite", "diorite", "polished_diorite", "andesite", "polished_andesite", "cobblestone");
+
+		}
+		/** Used to save the default template sample */
+		static {
+			Path path = FOLDER;
+			try {
+				if (!Files.exists(FOLDER)) {
+
+					Files.createDirectories(FOLDER);
+
+					for (var e : DEFAULT.entrySet()) {
+
+						path = FOLDER.resolve(e.getKey() + ".json");
+
+						try (var in = Files.newBufferedWriter(path)) {
+							GSON.toJson(e.getValue().itemList, in);
+						}
+
+					}
+
+				}
+			} catch (Throwable e) {
+				System.err.println("Could not access File/Folder: " + path);
+				e.printStackTrace();
+			}
+		}
+
+		private static void addDefault(String name, String... items) {
+			DEFAULT.put(name, new TemplateWarehouse(items));
+
+		}
+
+		private static void addUser(String name, ArrayList<String> items) {
+			USER.put(name, new TemplateWarehouse(items.toArray(String[]::new)));
+		}
+
+		public static TemplateWarehouse getTemplate(String name) {
+			if (!USER.containsKey(name)) {
+
+				var path = FOLDER.resolve(name + ".json");
+				try {
+					var json = JsonUtils.parseFileToArray(path);
+					addUser(name, json.getAllStrings());
+				} catch (FileNotFoundException e) {
+				} catch (IOException | JsonException e) {
+					ChatUtils.error("Couldn't load " + MC.runDirectory.toPath().relativize(path));
+					e.printStackTrace();
+				}
+			}
+			var user = USER.get(name);
+			return user == null ? DEFAULT.get(name) : user;
+		}
+
+		private final Set<String> itemList;
+
+		private TemplateWarehouse(String... items) {
+			itemList = Arrays.stream(items)//
+					.filter(Objects::nonNull)//
+					.map(s -> s.indexOf(':') < 0 ? "minecraft:" + s : s)//
+					.collect(Collectors.toSet());
+		}
+
+		public ItemList toItemList() {
+			return ItemList.normalize(itemList);
+		}
+
+	}
+
+	/**
 	 * Where Helper
 	 * 
 	 * @author yuanlu
@@ -1857,7 +1982,7 @@ public class WarehouseCmd extends Command {
 		private long										renderSwitchLast;
 		private boolean										renderSwitch;
 
-		public WhereWarehouse(Config config) {
+		public WhereWarehouse(Config config, boolean silent) {
 
 			config.flush();
 
@@ -1880,12 +2005,14 @@ public class WarehouseCmd extends Command {
 			EVENTS.add(RenderListener.class, this);
 			EVENTS.add(UpdateListener.class, this);
 
-			ChatUtils.message("Enter summary mode");
+			if (!silent) ChatUtils.message("Enter where mode");
 		}
 
-		public void exit() {
+		public void exit(boolean silent) {
 			EVENTS.remove(RenderListener.class, this);
 			EVENTS.remove(UpdateListener.class, this);
+
+			if (!silent) ChatUtils.message("Exit where mode");
 		}
 
 		@Override
@@ -2158,6 +2285,7 @@ public class WarehouseCmd extends Command {
 				".warehouse save [name] §7Save a warehouse configuration", //
 //				".warehouse sign <type> [w] [a] [c] §7Enable container tagging", //
 				".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode", //
+				".warehouse template <template> <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode", //
 				".warehouse run §7Start moving items", //
 				".warehouse summary §7Displays the current warehouse summary", //
 				".warehouse where §7Displays which container has items similar to hand item", //
@@ -2187,7 +2315,8 @@ public class WarehouseCmd extends Command {
 			loadConf(merge(args, 1));
 		}
 		case "save", "s" -> saveConf(merge(args, 1));
-		case "markmode", "m", "sign" -> sign(args);
+		case "markmode", "m", "sign" -> sign(args, false);
+		case "template", "t", "temp" -> sign(args, true);
 		case "run", "r" -> run();
 		case "summary" -> summary();
 		case "where", "item" -> where();
@@ -2268,12 +2397,21 @@ public class WarehouseCmd extends Command {
 			}
 			config = conf;
 			ChatUtils.message("Config loaded: " + confName);
+
 			SummaryWarehouse summaryWarehouse = WarehouseCmd.summary;
 			if (summaryWarehouse != null) {
 				summary = null;
-				summaryWarehouse.exit();
-				summary = new SummaryWarehouse(conf);
+				summaryWarehouse.exit(true);
+				summary = new SummaryWarehouse(conf, true);
 			}
+
+			WhereWarehouse whereWarehouse = WarehouseCmd.where;
+			if (whereWarehouse != null) {
+				where = null;
+				whereWarehouse.exit(true);
+				where = new WhereWarehouse(conf, true);
+			}
+
 		} finally {
 			containerCache = null;
 			status.set(Status.IDLE);
@@ -2348,25 +2486,37 @@ public class WarehouseCmd extends Command {
 	 * Marking containers
 	 *
 	 * @see SignWarehouse
+	 * @see TemplateWarehouse
 	 */
-	private void sign(String[] args) throws CmdException {
+	private void sign(String[] args, boolean useTemplate) throws CmdException {
 		if (status.compareAndSet(Status.IDLE, Status.SIGN)) {
 			try {
 				if (config == null) throw new CmdError("Empty configuration");
 
-				if (args.length <= 1) throw new CmdError("Missing parameter:\n"//
-						+ ".warehouse markmode <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode\n" //
-//						+ ".warehouse sign <type> [w] [a] [c] §7Enable container tagging\n" //
-						+ "type - §7Type of container: produce§a(I)§7/storage§a(O)§7/other§a(T)§7\n"//
-						+ "priority - §7Container priority\n"//
-						+ "maxAmountMode - §7Limit quantity type: all/itemList/countList/outputList\n"//
-						+ "maxAmount - §7Limit quantity"//
+				if (args.length <= 1) throw new CmdError(String.format("Missing parameter:\n"//
+						+ "§r.warehouse %s <type> [priority] [maxAmountMode] [maxAmount] §7Go into marking mode\n" //
+						+ "%s"//
+						+ "§rtype - §7Type of container: produce§a(I)§7/storage§a(O)§7/other§a(T)§7\n"//
+						+ "§rpriority - §7Container priority\n"//
+						+ "§rmaxAmountMode - §7Limit quantity type: all/itemList/countList/outputList\n"//
+						+ "§rmaxAmount - §7Limit quantity"//
 						+ "§7https://github.com/MineYuanlu/Wurst7/wiki/Warehouse#how-to-use-sign-mode"
 //						+ "c - §7For output type, whether to take out items that do not belong to this box"//
-				);
+						, useTemplate ? args[0] + " <template>" : args[0], useTemplate ? //
+								"§rtemplate - §7Name of template item list" : ""));
 
-				ContaionerType type = ContaionerType.get(args[1]);
-				if (type == null) throw new CmdSyntaxError(ContaionerType.syntax);
+				if (useTemplate) {// Move the array to align the parameter positions
+
+					String[] args0 = new String[args.length - 1];
+					System.arraycopy(args, 1, args0, 0, args0.length);
+					args = args0;
+
+				}
+
+				TemplateWarehouse	templateWarehouse	= useTemplate ? TemplateWarehouse.getTemplate(args[0]) : null;
+
+				ContaionerType		type				= ContaionerType.get(args[1]);
+				if (type == null) throw new CmdError(ContaionerType.syntax);
 
 				int weight = 0;
 				if (args.length > 2) try {
@@ -2378,7 +2528,7 @@ public class WarehouseCmd extends Command {
 				InOutType ioType = InOutType.ITEM_LIST;
 				if (args.length > 3) {
 					ioType = InOutType.get(args[3]);
-					if (ioType == null) throw new CmdSyntaxError(InOutType.syntax);
+					if (ioType == null) throw new CmdError(InOutType.syntax);
 				}
 
 				if (ioType.reject(type)) {
@@ -2397,7 +2547,7 @@ public class WarehouseCmd extends Command {
 				boolean clear = false;
 				if (args.length > 5) clear = hasStr(args[5], "true", "ture", "t", "yes", "y");
 
-				signing = new SignWarehouse(config, status, type, weight, ioType, amount, clear);
+				signing = new SignWarehouse(config, status, templateWarehouse, type, weight, ioType, amount, clear);
 
 			} catch (CmdException e) {
 				status.set(Status.IDLE);
@@ -2419,14 +2569,14 @@ public class WarehouseCmd extends Command {
 		if (summaryWarehouse != null) {
 
 			summary = null;
-			summaryWarehouse.exit();
+			summaryWarehouse.exit(false);
 
 		} else {
 
 			Config config = this.config;
 			if (config == null) throw new CmdError("Empty configuration");
 
-			summary = new SummaryWarehouse(config);
+			summary = new SummaryWarehouse(config, false);
 
 		}
 	}
@@ -2436,14 +2586,14 @@ public class WarehouseCmd extends Command {
 
 			WhereWarehouse whereWarehouse = where;
 			where = null;
-			whereWarehouse.exit();
+			whereWarehouse.exit(false);
 
 		} else {
 
 			Config config = this.config;
 			if (config == null) throw new CmdError("Empty configuration");
 
-			where = new WhereWarehouse(config);
+			where = new WhereWarehouse(config, false);
 
 		}
 	}

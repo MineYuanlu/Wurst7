@@ -49,8 +49,13 @@ import com.google.gson.JsonPrimitive;
 import com.mojang.blaze3d.systems.RenderSystem;
 
 import io.netty.util.CharsetUtil;
+import net.minecraft.block.AbstractSignBlock;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.ChestBlock;
+import net.minecraft.block.Material;
+import net.minecraft.block.PressurePlateBlock;
+import net.minecraft.block.TripwireBlock;
 import net.minecraft.block.entity.BarrelBlockEntity;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ChestBlockEntity;
@@ -79,6 +84,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Vec3i;
 import net.minecraft.util.registry.Registry;
 import net.wurstclient.SearchTags;
+import net.wurstclient.WurstClient;
 import net.wurstclient.ai.PathFinder;
 import net.wurstclient.ai.PathPos;
 import net.wurstclient.ai.PathProcessor;
@@ -333,12 +339,35 @@ public class WarehouseCmd extends Command {
 		/** Just get close to the target */
 		private static final class NearFinder extends PathFinder {
 
+			private final boolean invulnerable = WurstClient.MC.player.getAbilities().creativeMode;
+
 			public NearFinder(BlockPos goal) {
 				super(goal);
 			}
 
+			@SuppressWarnings("deprecation")
+			private boolean canGoThrough(BlockPos pos) {
+				// check if loaded
+				if (!WurstClient.MC.world.isChunkLoaded(pos)) return false;
+
+				// check if solid
+				Material	material	= BlockUtils.getState(pos).getMaterial();
+				Block		block		= BlockUtils.getBlock(pos);
+				if (material.blocksMovement() && !(block instanceof AbstractSignBlock)) return false;
+
+				// check if trapped
+				if (block instanceof TripwireBlock || block instanceof PressurePlateBlock) return false;
+
+				// check if safe
+				if (!invulnerable && (material == Material.LAVA || material == Material.FIRE)) return false;
+
+				return true;
+			}
+
 			@Override
 			protected boolean checkDone() {
+				if (!canGoThrough(current)) return false;
+				if (accurate) return super.checkDone();
 				double	range		= Math.max(WarehouseCmd.RANGE.getValue() - 2, 2);
 				double	eyeY		= MC.player.getEyeHeight(MC.player.getPose());
 				Vec3i	currentEye	= new Vec3i(current.getX(), (int) (current.getY() + eyeY), current.getZ());
@@ -348,17 +377,27 @@ public class WarehouseCmd extends Command {
 
 		}
 
-		private static final GoToHelper INSTANCE = new GoToHelper();
+		private static final CheckboxSetting USE_FLY = new CheckboxSetting("use fly", "Use flying instead of walking", false);
 
-		public static void goTo(BlockPos goal, Consumer<Boolean> callback) {
+		private static final GoToHelper	INSTANCE	= new GoToHelper();
+		private static boolean			flightEnabled;
+		private static boolean			accurate;
+
+		public static void goTo(BlockPos goal, Consumer<Boolean> callback, boolean accurate) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
 			INSTANCE.pathFinder	= new NearFinder(goal);
 			INSTANCE.callback	= callback;
+			GoToHelper.accurate	= accurate;
 
 			// reset
-			INSTANCE.updateCount	= 0;
+			INSTANCE.updateCount = 0;
+
+			// flight
+			flightEnabled = WURST.getHax().flightHack.isEnabled();
+			if (USE_FLY.isChecked()) WURST.getHax().flightHack.setEnabled(true);
+
 			// start
-			INSTANCE.enabled		= true;
+			INSTANCE.enabled = true;
 			EVENTS.add(UpdateListener.class, INSTANCE);
 			EVENTS.add(RenderListener.class, INSTANCE);
 		}
@@ -385,6 +424,7 @@ public class WarehouseCmd extends Command {
 			PathProcessor.releaseControls();
 
 			enabled = false;
+			if (USE_FLY.isChecked()) WURST.getHax().flightHack.setEnabled(flightEnabled);
 			callback.accept(success);
 		}
 
@@ -543,13 +583,6 @@ public class WarehouseCmd extends Command {
 			return list;
 		}
 
-		@Override
-		public ItemList clone() {
-			ItemList itemList = new ItemList();
-			forEach(itemList::put);
-			return itemList;
-		}
-
 		/**
 		 * Gets a list of all item amounts that have been set to 1
 		 * 
@@ -635,6 +668,13 @@ public class WarehouseCmd extends Command {
 			String	name	= Registry.ITEM.getId(itemStack.getItem()).toString();
 			int		amount	= itemStack.getCount();
 			compute(name, (ignore, old) -> old == null ? amount : (amount + old));
+		}
+
+		@Override
+		public ItemList clone() {
+			ItemList itemList = new ItemList();
+			forEach(itemList::put);
+			return itemList;
 		}
 
 		public boolean hasCanInput(PlayerInventory inv) {
@@ -1002,7 +1042,7 @@ public class WarehouseCmd extends Command {
 						}
 						if (!stop && GO_BACK.isChecked()) {
 							ChatUtils.message("Done. Now go back to the starting point.");
-							goTo(startPos);
+							goTo(startPos, true);
 						} else {
 							ChatUtils.message("Done.");
 						}
@@ -1228,6 +1268,14 @@ public class WarehouseCmd extends Command {
 
 		/** @return success */
 		private boolean goTo(BlockPos pos) {
+			return goTo(pos, false);
+		}
+
+		/**
+		 * @param accurate The target location must be reached
+		 * @return success
+		 */
+		private boolean goTo(BlockPos pos, boolean accurate) {
 			if (stop) return false;
 			status.set(Status.RUN_MOVING);
 			if (pos.getSquaredDistance(MC.player.getBlockPos()) < Math.pow(RANGE.getValue(), 2)) return true;
@@ -1236,7 +1284,7 @@ public class WarehouseCmd extends Command {
 			EVENTS.add(RenderListener.class, this);
 
 			CompletableFuture<Boolean> future = new CompletableFuture<>();
-			GoToHelper.goTo(pos, future::complete);
+			GoToHelper.goTo(pos, future::complete, accurate);
 			try {
 				return future.get() && !stop;
 			} catch (Throwable e) {
@@ -2296,6 +2344,7 @@ public class WarehouseCmd extends Command {
 		addSetting(TIME_OUT);
 		addSetting(SortWarehouse.SKIP_INVALID);
 		addSetting(SortWarehouse.GO_BACK);
+		addSetting(GoToHelper.USE_FLY);
 		for (ContaionerType ct : ContaionerType.values()) addSetting(ct.colorSetting);
 		addSetting(SignWarehouse.SEE_COLOR);
 		addSetting(SortWarehouse.GOAL_COLOR);

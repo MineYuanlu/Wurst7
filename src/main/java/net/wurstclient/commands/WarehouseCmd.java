@@ -377,11 +377,40 @@ public class WarehouseCmd extends Command {
 
 		}
 
-		private static final CheckboxSetting USE_FLY = new CheckboxSetting("use fly", "Use flying instead of walking", false);
+		private static final CheckboxSetting		USE_FLY		= new CheckboxSetting("use fly", "Use flying instead of walking", false);
 
-		private static final GoToHelper	INSTANCE	= new GoToHelper();
-		private static boolean			flightEnabled;
-		private static boolean			accurate;
+		private static final GoToHelper				INSTANCE	= new GoToHelper();
+		private static boolean						flightEnabled;
+		private static boolean						accurate;
+
+		private static Runnable						nextTick;
+		private static CompletableFuture<Boolean>	nextTickFuture;
+		private static UpdateListener				nextTickRunner;
+		static {
+			nextTickRunner = () -> {
+				var	nt	= nextTick;
+				var	ntf	= nextTickFuture;
+				if (nt != null) {
+					nt.run();
+					nextTick = null;
+				}
+				if (ntf != null) {
+					ntf.complete(Boolean.TRUE);
+					nextTickFuture = null;
+					EVENTS.remove(UpdateListener.class, nextTickRunner);
+				}
+			};
+		}
+
+		private static void nextTick(Runnable r) {
+			nextTick		= r;
+			nextTickFuture	= new CompletableFuture<>();
+			EVENTS.add(UpdateListener.class, nextTickRunner);
+			try {
+				nextTickFuture.get(5, TimeUnit.SECONDS);
+			} catch (Throwable e) {
+			}
+		}
 
 		public static void goTo(BlockPos goal, Consumer<Boolean> callback, boolean accurate) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
@@ -394,7 +423,7 @@ public class WarehouseCmd extends Command {
 
 			// flight
 			flightEnabled = WURST.getHax().flightHack.isEnabled();
-			if (USE_FLY.isChecked()) WURST.getHax().flightHack.setEnabled(true);
+			if (USE_FLY.isChecked()) nextTick(() -> WURST.getHax().flightHack.setEnabled(true));
 
 			// start
 			INSTANCE.enabled = true;
@@ -424,7 +453,7 @@ public class WarehouseCmd extends Command {
 			PathProcessor.releaseControls();
 
 			enabled = false;
-			if (USE_FLY.isChecked()) WURST.getHax().flightHack.setEnabled(flightEnabled);
+			if (USE_FLY.isChecked()) nextTick(() -> WURST.getHax().flightHack.setEnabled(flightEnabled));
 			callback.accept(success);
 		}
 

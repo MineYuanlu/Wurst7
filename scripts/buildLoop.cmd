@@ -13,7 +13,7 @@ echo.
 echo Building Wurst...
 set JAVA_HOME=%JAVA_HOME_17%
 call gradlew.bat build
-copy /y/b "D:\document\development\java\project\Wurst7\build\libs\Wurst-Client-yuanlu-1.5-MC1.18.jar" "D:\game\mc\MC\versions\1.18-fabric\mods\"
+copy /y/b "D:\document\development\java\project\Wurst7\build\libs\Wurst-Client-yuanlu-1.6-MC1.18.jar" "D:\game\mc\MC\versions\1.18-fabric\mods\"
 echo.
 echo Done. Check for errors above before closing this window!
 pause

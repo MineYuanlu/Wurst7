@@ -379,7 +379,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		targetPos	= null;
 		chestSyncId	= null;
 		if (!keepCache.isChecked()) cache = null;
-		
+
 		PathProcessor.releaseControls();
 	}
 
@@ -553,10 +553,15 @@ public class WarehouseHack extends Hack implements UpdateListener {
 					}
 				};
 		final int		storeAmount[]	= new int[4 * 9];
-
 		var				inventory		= MC.player.getInventory().main;
+		var				banItems		= ignores.getItemNames();
+		var				banNS			= ignoreNS.isChecked();
 		for (int i = 0; i < 36; i++) {
-			storeAmount[i] = itemList.simulateStore(inventory.get(i), amount, isGroupAmount);
+			var item = inventory.get(i);
+			if (banNS && !item.isStackable() || //
+					banItems.contains(Registry.ITEM.getId(item.getItem()).toString())) //
+				storeAmount[i] = -1;
+			else storeAmount[i] = itemList.simulateStore(item, amount, isGroupAmount);
 		}
 
 		for (int i = 0; i < 36; i++) {

@@ -33,7 +33,6 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.crash.CrashException;
 import net.minecraft.util.crash.CrashReport;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.registry.Registry;
@@ -41,6 +40,7 @@ import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
 import net.wurstclient.Category;
 import net.wurstclient.SearchTags;
+import net.wurstclient.ai.PathProcessor;
 import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hack.DontSaveState;
 import net.wurstclient.hack.Hack;
@@ -193,6 +193,8 @@ public class WarehouseHack extends Hack implements UpdateListener {
 			"When specifying the maximum storage quantity, specify the unit as \"group\" or \"number\"", true);
 	private final SliderSetting					timeout			= new SliderSetting("Timeout",
 			"Specifies the maximum time (in tick) to wait for interaction with the block", 20 * 5, 1, 20 * 20, 1, ValueDisplay.INTEGER);
+	private final CheckboxSetting				lockMove		= new CheckboxSetting("Lock Move",
+			"Lock the movement at the necessary stage to prevent accidental errors", false);
 	private final CheckboxSetting				useChest		= new CheckboxSetting("Use Chest", true);
 
 	private final CheckboxSetting				useTrapChest	= new CheckboxSetting("Use Trap Chest", false);
@@ -213,6 +215,9 @@ public class WarehouseHack extends Hack implements UpdateListener {
 
 	private int									chestSize;
 
+	/** Prevent persistent failure */
+	private boolean								lastOpenFail;
+
 	public WarehouseHack() {
 		super("Warehouse");
 
@@ -226,6 +231,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		addSetting(amount);
 		addSetting(amountWithGroup);
 		addSetting(timeout);
+		addSetting(lockMove);
 
 		addSetting(useChest);
 		addSetting(useTrapChest);
@@ -288,6 +294,22 @@ public class WarehouseHack extends Hack implements UpdateListener {
 
 		}
 		return stream;
+	}
+
+	private Collection<BlockPos> getOthers(BlockPos pos) {
+		BlockEntity	chestBE	= MC.world.getBlockEntity(pos);
+		BlockState	state	= chestBE.getCachedState();
+
+		if (state.contains(ChestBlock.CHEST_TYPE)) {
+			ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
+			if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
+
+				BlockPos pos2 = pos.offset(ChestBlock.getFacing(state));
+				return Collections.singletonList(pos2);
+
+			}
+		}
+		return null;
 	}
 
 	public String getRenderName() {
@@ -357,6 +379,8 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		targetPos	= null;
 		chestSyncId	= null;
 		if (!keepCache.isChecked()) cache = null;
+		
+		PathProcessor.releaseControls();
 	}
 
 	@Override
@@ -390,17 +414,28 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		MC.player.closeScreen();
 		if (targetPos == null) {
 			ChatUtils.error("[Warehouse] Internal error: interaction with empty target.");
+			setEnabled(false);
+
 		} else if (rightClickBlockSimple(targetPos)) {
-			waitingTick	= 0;
-			status		= Status.WAITING;
-			return;
+			waitingTick		= 0;
+			status			= Status.WAITING;
+			lastOpenFail	= false;
+
 		} else {
-			ChatUtils.error("[Warehouse] Internal error: Unable to reach: " + targetPos.toShortString());
+			ChatUtils.warning("[Warehouse] Unable to reach: " + targetPos.toShortString());
+			if (lastOpenFail) {
+				setEnabled(false);
+			} else {
+				lastOpenFail	= true;
+				status			= Status.SEARCHING;
+			}
+
 		}
-		setEnabled(false);
+		PathProcessor.releaseControls();
 	}
 
 	private void openChest(BlockPos pos, boolean isRun) {
+		if (lockMove.isChecked()) PathProcessor.lockControls();
 		targetPos			= pos;
 		targetHandleType	= isRun;
 		status				= Status.OPENING;
@@ -431,22 +466,6 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		return false;
 	}
 
-	private Collection<BlockPos> getOthers(BlockPos pos) {
-		BlockEntity	chestBE	= MC.world.getBlockEntity(pos);
-		BlockState	state	= chestBE.getCachedState();
-
-		if (state.contains(ChestBlock.CHEST_TYPE)) {
-			ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
-			if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
-
-				BlockPos pos2 = pos.offset(ChestBlock.getFacing(state));
-				return Collections.singletonList(pos2);
-
-			}
-		}
-		return null;
-	}
-
 	private void scanChest(ItemStack[] chest) {
 		var targetPos = this.targetPos;
 		if (targetPos == null) {
@@ -474,7 +493,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 
 		var			items			= getItems(ignoreNS.isChecked(), ignores.getItemNames());
 
-		var			blocksStream	= getValidBlocks(range.getValue(), this::isCorrectBlockEntity);
+		var			blocksStream	= getValidBlocks(range.getValue() - 1, this::isCorrectBlockEntity);
 		BlockPos[]	blocks			= null;
 
 		for (var itr = items.iterator(); itr.hasNext();) {

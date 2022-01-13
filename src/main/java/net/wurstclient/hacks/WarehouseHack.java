@@ -4,6 +4,7 @@
 package net.wurstclient.hacks;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -19,23 +20,29 @@ import com.google.common.util.concurrent.Runnables;
 import it.unimi.dsi.fastutil.objects.Object2IntLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.ChestBlock;
 import net.minecraft.block.entity.BarrelBlockEntity;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.block.entity.TrappedChestBlockEntity;
+import net.minecraft.block.enums.ChestType;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.crash.CrashException;
 import net.minecraft.util.crash.CrashReport;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.registry.Registry;
 import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
 import net.wurstclient.Category;
+import net.wurstclient.SearchTags;
 import net.wurstclient.events.UpdateListener;
+import net.wurstclient.hack.DontSaveState;
 import net.wurstclient.hack.Hack;
 import net.wurstclient.settings.CheckboxSetting;
 import net.wurstclient.settings.ItemListSetting;
@@ -51,6 +58,8 @@ import net.wurstclient.util.RotationUtils;
  * @author yuanlu
  *
  */
+@DontSaveState
+@SearchTags({ "warehouse", "sort", "chest", "ware", "item", "no-conf" })
 public class WarehouseHack extends Hack implements UpdateListener {
 
 	private static final class ItemList {
@@ -422,6 +431,22 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		return false;
 	}
 
+	private Collection<BlockPos> getOthers(BlockPos pos) {
+		BlockEntity	chestBE	= MC.world.getBlockEntity(pos);
+		BlockState	state	= chestBE.getCachedState();
+
+		if (state.contains(ChestBlock.CHEST_TYPE)) {
+			ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
+			if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
+
+				BlockPos pos2 = pos.offset(ChestBlock.getFacing(state));
+				return Collections.singletonList(pos2);
+
+			}
+		}
+		return null;
+	}
+
 	private void scanChest(ItemStack[] chest) {
 		var targetPos = this.targetPos;
 		if (targetPos == null) {
@@ -432,6 +457,9 @@ public class WarehouseHack extends Hack implements UpdateListener {
 
 		var itemList = cache.computeIfAbsent(targetPos, x -> new ItemList());
 		itemList.update(chest);
+
+		var others = getOthers(targetPos);
+		if (others != null && !others.isEmpty()) others.forEach(pos -> cache.put(pos, itemList));
 
 		MC.player.closeScreen();
 		status = Status.SEARCHING;

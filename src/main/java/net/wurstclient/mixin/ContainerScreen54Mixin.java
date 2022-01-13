@@ -24,6 +24,7 @@ import net.minecraft.text.Text;
 import net.wurstclient.WurstClient;
 import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.hacks.AutoStealHack;
+import net.wurstclient.hacks.WarehouseHack;
 
 @Mixin(GenericContainerScreen.class)
 public abstract class ContainerScreen54Mixin
@@ -37,7 +38,9 @@ public abstract class ContainerScreen54Mixin
 	private final AutoStealHack autoSteal =
 		WurstClient.INSTANCE.getHax().autoStealHack;
 	private final WarehouseCmd warehouse =
-		WurstClient.INSTANCE.getCmds().warehouseCmd;
+			WurstClient.INSTANCE.getCmds().warehouseCmd;
+	private final WarehouseHack warehouseHack =
+			WurstClient.INSTANCE.getHax().warehouseHack;
 	private int mode;
 	
 	public ContainerScreen54Mixin(WurstClient wurst,
@@ -54,8 +57,9 @@ public abstract class ContainerScreen54Mixin
 		
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
-		
+
 		if (warehouse.callbackOpenWindow(handler.syncId, rows * 9)) return;
+		if (warehouseHack.callbackOpenWindow(handler.syncId, rows * 9)) return;
 		
 		if(autoSteal.areButtonsVisible())
 		{

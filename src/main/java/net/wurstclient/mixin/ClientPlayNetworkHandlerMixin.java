@@ -20,14 +20,17 @@ import net.wurstclient.WurstClient;
 import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.event.EventManager;
 import net.wurstclient.events.PacketOutputListener.PacketOutputEvent;
+import net.wurstclient.hacks.WarehouseHack;
 
 @Mixin(ClientPlayNetworkHandler.class)
 public abstract class ClientPlayNetworkHandlerMixin
 	implements ClientPlayPacketListener
 {
-	
-	private final WarehouseCmd warehouse =
+
+	private WarehouseCmd warehouse =
 			WurstClient.INSTANCE.getCmds().warehouseCmd;
+	private WarehouseHack warehouseHack =
+			WurstClient.INSTANCE.getHax().warehouseHack;
 	
 	@Inject(at = {@At("HEAD")},
 		method = {"sendPacket(Lnet/minecraft/network/Packet;)V"},
@@ -45,6 +48,13 @@ public abstract class ClientPlayNetworkHandlerMixin
 			method = {"onInventory(Lnet/minecraft/network/packet/s2c/play/InventoryS2CPacket;)V"},
 			cancellable = true)
 	private void onInventory(InventoryS2CPacket packet, CallbackInfo ci) {
+
+		if (warehouse==null)warehouse =
+				WurstClient.INSTANCE.getCmds().warehouseCmd;
+		if (warehouseHack==null)warehouseHack =
+				WurstClient.INSTANCE.getHax().warehouseHack;
+		System.out.println(warehouse+" "+warehouseHack);
 		warehouse.callbackInventory(packet.getContents(), packet.getSyncId());
+		warehouseHack.callbackInventory(packet.getContents(), packet.getSyncId());
 	}
 }

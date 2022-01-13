@@ -22,6 +22,7 @@ import net.minecraft.text.Text;
 import net.wurstclient.WurstClient;
 import net.wurstclient.commands.WarehouseCmd;
 import net.wurstclient.hacks.AutoStealHack;
+import net.wurstclient.hacks.WarehouseHack;
 
 @Mixin(ShulkerBoxScreen.class)
 public abstract class ShulkerBoxScreenMixin
@@ -33,7 +34,9 @@ public abstract class ShulkerBoxScreenMixin
 	private final AutoStealHack autoSteal =
 		WurstClient.INSTANCE.getHax().autoStealHack;
 	private final WarehouseCmd warehouse =
-		WurstClient.INSTANCE.getCmds().warehouseCmd;
+			WurstClient.INSTANCE.getCmds().warehouseCmd;
+	private final WarehouseHack warehouseHack =
+			WurstClient.INSTANCE.getHax().warehouseHack;
 	private int mode;
 	
 	public ShulkerBoxScreenMixin(WurstClient wurst,
@@ -50,8 +53,9 @@ public abstract class ShulkerBoxScreenMixin
 		
 		if(!WurstClient.INSTANCE.isEnabled())
 			return;
-		
+
 		if (warehouse.callbackOpenWindow(handler.syncId, rows*9)) return;
+		if (warehouseHack.callbackOpenWindow(handler.syncId, rows*9)) return;
 
 		
 		if(autoSteal.areButtonsVisible())

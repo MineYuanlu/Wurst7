@@ -402,16 +402,6 @@ public class WarehouseCmd extends Command {
 			};
 		}
 
-		private static void nextTick(Runnable r) {
-			nextTick		= r;
-			nextTickFuture	= new CompletableFuture<>();
-			EVENTS.add(UpdateListener.class, nextTickRunner);
-			try {
-				nextTickFuture.get(5, TimeUnit.SECONDS);
-			} catch (Throwable e) {
-			}
-		}
-
 		public static void goTo(BlockPos goal, Consumer<Boolean> callback, boolean accurate) {
 			if (INSTANCE.enabled) INSTANCE.disable(false);
 			INSTANCE.pathFinder	= new NearFinder(goal);
@@ -429,6 +419,16 @@ public class WarehouseCmd extends Command {
 			INSTANCE.enabled = true;
 			EVENTS.add(UpdateListener.class, INSTANCE);
 			EVENTS.add(RenderListener.class, INSTANCE);
+		}
+
+		private static void nextTick(Runnable r) {
+			nextTick		= r;
+			nextTickFuture	= new CompletableFuture<>();
+			EVENTS.add(UpdateListener.class, nextTickRunner);
+			try {
+				nextTickFuture.get(5, TimeUnit.SECONDS);
+			} catch (Throwable e) {
+			}
 		}
 
 		public static void stop() {
@@ -509,13 +509,13 @@ public class WarehouseCmd extends Command {
 				// set processor
 				processor = pathFinder.getProcessor();
 
-				System.out.println("Done");
+				if (debug) System.out.println("Done");
 			}
 
 			// check path
 			if (processor != null//
 					&& !pathFinder.isPathStillValid(processor.getIndex())) {
-				System.out.println("Updating path...");
+				if (debug) System.out.println("Updating path...");
 
 				if (updateCount++ > 30) {
 					ChatUtils.warning("Pathfinding failed: too many updates.");
@@ -1065,7 +1065,7 @@ public class WarehouseCmd extends Command {
 							Runnable task = next;
 							next = null;
 
-							System.out.println("Call Task: " + nextName);
+							if (debug) System.out.println("Call Task: " + nextName);
 							task.run();
 
 						}
@@ -1075,7 +1075,7 @@ public class WarehouseCmd extends Command {
 						} else {
 							ChatUtils.message("Done.");
 						}
-						System.out.println("Finish!");
+						if (debug) System.out.println("Finish!");
 					} catch (Throwable e) {
 						ChatUtils.error("An error occurred: " + e);
 						e.printStackTrace();
@@ -1594,7 +1594,7 @@ public class WarehouseCmd extends Command {
 					itemList.put(name, canCount);
 
 				}
-				System.out.println("scan Cache: pos=" + pos + ", list=" + itemList);
+				if (debug) System.out.println("scan Cache: pos=" + pos + ", list=" + itemList);
 				posCache.put(pos, itemList);
 
 			} finally {
@@ -1707,7 +1707,7 @@ public class WarehouseCmd extends Command {
 
 					}
 
-					System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
+					if (debug) System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
 
 					if (canPutCount <= 0 || putSlots.isEmpty()) continue;
 
@@ -1761,7 +1761,7 @@ public class WarehouseCmd extends Command {
 
 				int slotId = itemList.length + (i < 9 ? (i + 27) : (i - 9));
 
-				System.out.printf("store Item: slot=%d, count=%d, tar=%d\n", slotId, item.getCount(), amount);
+				if (debug) System.out.printf("store Item: slot=%d, count=%d, tar=%d\n", slotId, item.getCount(), amount);
 				if (item.getCount() <= amount) {
 
 					amount -= item.getCount();
@@ -1799,7 +1799,7 @@ public class WarehouseCmd extends Command {
 
 					}
 
-					System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
+					if (debug) System.out.println("[部分物品] " + canPutCount + ", " + putSlots);
 
 					if (canPutCount <= 0 || putSlots.isEmpty()) continue;
 
@@ -2206,6 +2206,8 @@ public class WarehouseCmd extends Command {
 
 	/** where helper */
 	private static WhereWarehouse			where;
+
+	private static boolean					debug;
 
 	private static Box getBoundingBox(BlockPos pos) {
 		return new Box(pos.getX(), pos.getY(), pos.getZ(), //
@@ -2675,5 +2677,4 @@ public class WarehouseCmd extends Command {
 
 		}
 	}
-
 }

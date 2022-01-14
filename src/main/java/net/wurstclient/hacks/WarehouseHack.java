@@ -242,7 +242,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 	}
 
 	public synchronized void callbackInventory(List<ItemStack> items, int syncId) {
-		System.out.println("WarehouseHack callbackInventory: " + syncId + ", " + items + ", " + status + ", " + chestSyncId);
+//		System.out.println("WarehouseHack callbackInventory: " + syncId + ", " + items + ", " + status + ", " + chestSyncId);
 		if (status != Status.WAITING || syncId != chestSyncId) return;
 
 		chestSyncId = null;
@@ -257,7 +257,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 	}
 
 	public synchronized boolean callbackOpenWindow(int syncId, int size) {
-		System.out.println("WarehouseHack callbackOpenWindow: " + syncId + ", " + size + ", " + status);
+//		System.out.println("WarehouseHack callbackOpenWindow: " + syncId + ", " + size + ", " + status);
 		if (status != Status.WAITING) return false;
 
 		if (chestSyncId == null) {
@@ -571,7 +571,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 			if (item.getCount() <= 0) continue;
 			int slotId = chest.length + (i < 9 ? (i + 27) : (i - 9));
 
-			System.out.println("[WarehouseHack] store " + i + ", " + storeCount + ", " + item.getCount());
+//			System.out.println("[WarehouseHack] store " + i + ", " + storeCount + ", " + item.getCount());
 
 			if (item.getCount() <= storeCount) {// Simple move mode
 

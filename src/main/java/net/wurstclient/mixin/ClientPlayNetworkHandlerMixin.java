@@ -53,7 +53,6 @@ public abstract class ClientPlayNetworkHandlerMixin
 				WurstClient.INSTANCE.getCmds().warehouseCmd;
 		if (warehouseHack==null)warehouseHack =
 				WurstClient.INSTANCE.getHax().warehouseHack;
-		System.out.println(warehouse+" "+warehouseHack);
 		warehouse.callbackInventory(packet.getContents(), packet.getSyncId());
 		warehouseHack.callbackInventory(packet.getContents(), packet.getSyncId());
 	}

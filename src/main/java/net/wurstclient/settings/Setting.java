@@ -38,10 +38,10 @@ public abstract class Setting
 	
 	public final String getDescription()
 	{
-		return description;
+		return WurstClient.INSTANCE.translate(description);
 	}
 	
-	public String getWrappedDescription(int width)
+	public final String getWrappedDescription(int width)
 	{
 		List<StringVisitable> lines = WurstClient.MC.textRenderer
 			.getTextHandler().wrapLines(getDescription(), width, Style.EMPTY);

@@ -22,9 +22,9 @@ import net.minecraft.entity.mob.EndermanEntity;
 import net.minecraft.entity.mob.Monster;
 import net.minecraft.entity.mob.WaterCreatureEntity;
 import net.minecraft.entity.mob.ZombifiedPiglinEntity;
+import net.minecraft.entity.passive.AbstractHorseEntity;
 import net.minecraft.entity.passive.AnimalEntity;
 import net.minecraft.entity.passive.GolemEntity;
-import net.minecraft.entity.passive.HorseBaseEntity;
 import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.passive.PassiveEntity;
 import net.minecraft.entity.passive.TameableEntity;
@@ -42,6 +42,7 @@ import net.wurstclient.events.RenderListener;
 import net.wurstclient.events.UpdateListener;
 import net.wurstclient.hack.DontSaveState;
 import net.wurstclient.hack.Hack;
+import net.wurstclient.settings.AttackSpeedSliderSetting;
 import net.wurstclient.settings.CheckboxSetting;
 import net.wurstclient.settings.SliderSetting;
 import net.wurstclient.settings.SliderSetting.ValueDisplay;
@@ -51,6 +52,9 @@ import net.wurstclient.util.FakePlayerEntity;
 public final class ProtectHack extends Hack
 	implements UpdateListener, RenderListener
 {
+	private final AttackSpeedSliderSetting speed =
+		new AttackSpeedSliderSetting();
+	
 	private final CheckboxSetting useAi =
 		new CheckboxSetting("Use AI (experimental)", false);
 	
@@ -64,8 +68,7 @@ public final class ProtectHack extends Hack
 		new SliderSetting("Filter flying",
 			"Won't attack players that\n" + "are at least the given\n"
 				+ "distance above ground.",
-			0, 0, 2, 0.05,
-			v -> v == 0 ? "off" : ValueDisplay.DECIMAL.getValueString(v));
+			0, 0, 2, 0.05, ValueDisplay.DECIMAL.withLabel(0, "off"));
 	
 	private final CheckboxSetting filterMonsters = new CheckboxSetting(
 		"Filter monsters", "Won't attack zombies, creepers, etc.", false);
@@ -120,6 +123,7 @@ public final class ProtectHack extends Hack
 		super("Protect");
 		
 		setCategory(Category.COMBAT);
+		addSetting(speed);
 		addSetting(useAi);
 		
 		addSetting(filterPlayers);
@@ -181,6 +185,7 @@ public final class ProtectHack extends Hack
 		
 		pathFinder = new EntityPathFinder(friend, distanceF);
 		
+		speed.resetTimer();
 		EVENTS.add(UpdateListener.class, this);
 		EVENTS.add(RenderListener.class, this);
 	}
@@ -200,7 +205,7 @@ public final class ProtectHack extends Hack
 		
 		if(friend != null)
 		{
-			MC.options.keyForward.setPressed(false);
+			MC.options.forwardKey.setPressed(false);
 			friend = null;
 		}
 	}
@@ -208,6 +213,8 @@ public final class ProtectHack extends Hack
 	@Override
 	public void onUpdate()
 	{
+		speed.updateTimer();
+		
 		// check if player died, friend died or disappeared
 		if(friend == null || friend.isRemoved()
 			|| !(friend instanceof LivingEntity)
@@ -271,8 +278,8 @@ public final class ProtectHack extends Hack
 			stream = stream
 				.filter(e -> !(e instanceof TameableEntity
 					&& ((TameableEntity)e).isTamed()))
-				.filter(e -> !(e instanceof HorseBaseEntity
-					&& ((HorseBaseEntity)e).isTame()));
+				.filter(e -> !(e instanceof AbstractHorseEntity
+					&& ((AbstractHorseEntity)e).isTame()));
 		
 		if(filterTraders.isChecked())
 			stream = stream.filter(e -> !(e instanceof MerchantEntity));
@@ -351,19 +358,19 @@ public final class ProtectHack extends Hack
 						MC.player.getX(), target.getY(), MC.player.getZ()))
 			{
 				if(MC.player.getY() > target.getY() + 1D)
-					MC.options.keySneak.setPressed(true);
+					MC.options.sneakKey.setPressed(true);
 				else if(MC.player.getY() < target.getY() - 1D)
-					MC.options.keyJump.setPressed(true);
+					MC.options.jumpKey.setPressed(true);
 			}else
 			{
-				MC.options.keySneak.setPressed(false);
-				MC.options.keyJump.setPressed(false);
+				MC.options.sneakKey.setPressed(false);
+				MC.options.jumpKey.setPressed(false);
 			}
 			
 			// follow target
 			WURST.getRotationFaker()
 				.faceVectorClient(target.getBoundingBox().getCenter());
-			MC.options.keyForward.setPressed(MC.player.distanceTo(
+			MC.options.forwardKey.setPressed(MC.player.distanceTo(
 				target) > (target == friend ? distanceF : distanceE));
 		}
 		
@@ -372,13 +379,14 @@ public final class ProtectHack extends Hack
 			WURST.getHax().autoSwordHack.setSlot();
 			
 			// check cooldown
-			if(MC.player.getAttackCooldownProgress(0) < 1)
+			if(!speed.isTimeToAttack())
 				return;
 			
 			// attack enemy
 			WURST.getHax().criticalsHack.doCritical();
 			MC.interactionManager.attackEntity(MC.player, enemy);
 			MC.player.swingHand(Hand.MAIN_HAND);
+			speed.resetTimer();
 		}
 	}
 	

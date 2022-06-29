@@ -980,7 +980,7 @@ public class WarehouseCmd extends Command {
 				"Whether to return to the starting point after sorting.", false);
 		/** Compare the distance between the pos and the player */
 		private static final Comparator<BlockPos>	COMPARATOR_DISTANCE	=													//
-				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos(), false));
+				Comparator.comparingDouble(pos -> pos.getSquaredDistance(MC.player.getPos()));
 
 		/**
 		 * Construct a function to return the required quantity of a specified item in
@@ -2302,10 +2302,10 @@ public class WarehouseCmd extends Command {
 			Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
 			Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
 			Shader		shader		= RenderSystem.getShader();
-			solidBox.setShader(viewMatrix, projMatrix, shader);
+			solidBox.draw(viewMatrix, projMatrix, shader);
 
 			RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
-			outlinedBox.setShader(viewMatrix, projMatrix, shader);
+			outlinedBox.draw(viewMatrix, projMatrix, shader);
 
 			matrixStack.pop();
 
@@ -2325,10 +2325,10 @@ public class WarehouseCmd extends Command {
 		Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
 		Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
 		Shader		shader		= RenderSystem.getShader();
-		solidBox.setShader(viewMatrix, projMatrix, shader);
+		solidBox.draw(viewMatrix, projMatrix, shader);
 
 		RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
-		outlinedBox.setShader(viewMatrix, projMatrix, shader);
+		outlinedBox.draw(viewMatrix, projMatrix, shader);
 
 		matrixStack.pop();
 

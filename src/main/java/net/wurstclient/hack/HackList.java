@@ -174,12 +174,14 @@ public final class HackList implements UpdateListener
 	public final TiredHack tiredHack = new TiredHack();
 	public final TooManyHaxHack tooManyHaxHack = new TooManyHaxHack();
 	public final TpAuraHack tpAuraHack = new TpAuraHack();
+	public final TradeFillHack tradeFillHack = new TradeFillHack();
 	public final TrajectoriesHack trajectoriesHack = new TrajectoriesHack();
 	public final TreeBotHack treeBotHack = new TreeBotHack();
 	public final TriggerBotHack triggerBotHack = new TriggerBotHack();
 	public final TrollPotionHack trollPotionHack = new TrollPotionHack();
 	public final TrueSightHack trueSightHack = new TrueSightHack();
 	public final TunnellerHack tunnellerHack = new TunnellerHack();
+	public final WarehouseHack warehouseHack = new WarehouseHack();
 	public final XRayHack xRayHack = new XRayHack();
 	
 	private final TreeMap<String, Hack> hax =

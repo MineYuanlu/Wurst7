@@ -23,6 +23,7 @@ import net.minecraft.network.listener.TickablePacketListener;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkData;
 import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
+import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
 import net.minecraft.network.packet.s2c.play.ServerMetadataS2CPacket;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
@@ -91,5 +92,12 @@ public abstract class ClientPlayNetworkHandlerMixin
 		packet.visitUpdates(
 			(pos, state) -> WurstClient.INSTANCE.getHax().newChunksHack
 				.afterUpdateBlock(pos));
+	}
+	
+	@Inject(at={@At("RETURN")},
+			method = {"onInventory(Lnet/minecraft/network/packet/s2c/play/InventoryS2CPacket;)V"})
+	private void onInventory(InventoryS2CPacket packet, CallbackInfo ci) {
+        WurstClient.INSTANCE.getCmds().warehouseCmd.callbackInventory(packet.getContents(), packet.getSyncId());
+        WurstClient.INSTANCE.getHax().warehouseHack.callbackInventory(packet.getContents(), packet.getSyncId());
 	}
 }

@@ -29,14 +29,14 @@ import net.minecraft.block.entity.ShulkerBoxBlockEntity;
 import net.minecraft.block.entity.TrappedChestBlockEntity;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.item.ItemStack;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.crash.CrashException;
 import net.minecraft.util.crash.CrashReport;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.registry.Registry;
-import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
 import net.wurstclient.Category;
 import net.wurstclient.SearchTags;
@@ -63,7 +63,7 @@ import net.wurstclient.util.RotationUtils;
 public class WarehouseHack extends Hack implements UpdateListener {
 
 	private static final class ItemList {
-		private static final BiFunction<Integer, Integer, Integer>	add	= (a, b) -> a + b;
+		private static final BiFunction<Integer, Integer, Integer>	add	= Integer::sum;
 		private long												updateTime;
 		private int													emptySlots;
 		private Object2IntMap<String>								items;
@@ -80,7 +80,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		}
 
 		public boolean canStore(ItemStack item, int amount, boolean isGroupAmount) {
-			String	id			= Registry.ITEM.getId(item.getItem()).toString();
+			String	id			= item.getItem().toString();
 
 			int		chestAmount	= items.getInt(id);
 
@@ -101,7 +101,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		public int simulateStore(ItemStack item, int amount, boolean isGroupAmount) {
 			if (item == null || item.isEmpty()) return 0;
 
-			String	id			= Registry.ITEM.getId(item.getItem()).toString();
+			String	id			= item.getItem().toString();
 
 			int		chestAmount	= items.getInt(id);
 
@@ -158,7 +158,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 				if (item == null || item.isEmpty()) emptySlots++;
 				else {
 
-					String id = Registry.ITEM.getId(item.getItem()).toString();
+					String id = item.getItem().toString();
 					items.merge(id, item.getCount(), add);
 					slotsCount.merge(id, 1, add);
 
@@ -202,7 +202,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 	private final CheckboxSetting				useBarrel		= new CheckboxSetting("Use Barrel", true);
 	private LinkedHashMap<BlockPos, ItemList>	cache;
 
-	private RegistryKey<World>					worldId;
+	private RegistryKey<World>                  worldId;
 	private Status								status;
 	private BlockPos							targetPos;
 	/**
@@ -286,7 +286,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 
 		var stream = MC.player.getInventory().main.stream() //
 				.filter(Predicate.not(ItemStack::isEmpty)) //
-				.filter(item -> !ignoresCollection.contains(Registry.ITEM.getId(item.getItem()).toString()))//
+				.filter(item -> !ignoresCollection.contains(item.getItem().toString()))//
 		;
 		if (ignoreNS) {
 
@@ -320,13 +320,9 @@ public class WarehouseHack extends Hack implements UpdateListener {
 	private Stream<BlockPos> getValidBlocks(double range, Predicate<BlockEntity> validator) {
 		Vec3d		eyesVec	= RotationUtils.getEyesPos().subtract(0.5, 0.5, 0.5);
 		double		rangeSq	= Math.pow(range + 0.5, 2);
-		int			rangeI	= (int) Math.ceil(range);
+		int			rangeI	= MathHelper.ceil(range);
 
-		BlockPos	center	= new BlockPos(RotationUtils.getEyesPos());
-		BlockPos	min		= center.add(-rangeI, -rangeI, -rangeI);
-		BlockPos	max		= center.add(rangeI, rangeI, rangeI);
-
-		return BlockUtils.getAllInBox(min, max).stream()//
+		return BlockUtils.getAllInBoxStream(BlockPos.ofFloored(RotationUtils.getEyesPos()),rangeI)//
 				.filter(pos -> eyesVec.squaredDistanceTo(Vec3d.of(pos)) <= rangeSq)//
 				.map(MC.world::getBlockEntity)//
 				.filter(Objects::nonNull)//
@@ -559,7 +555,7 @@ public class WarehouseHack extends Hack implements UpdateListener {
 		for (int i = 0; i < 36; i++) {
 			var item = inventory.get(i);
 			if (banNS && !item.isStackable() || //
-					banItems.contains(Registry.ITEM.getId(item.getItem()).toString())) //
+					banItems.contains(item.getItem().toString())) //
 				storeAmount[i] = -1;
 			else storeAmount[i] = itemList.simulateStore(item, amount, isGroupAmount);
 		}

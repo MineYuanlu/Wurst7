@@ -37,6 +37,12 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import net.minecraft.block.AbstractFireBlock;
+import net.minecraft.block.Blocks;
+import net.minecraft.client.gl.ShaderProgram;
+import net.minecraft.registry.Registries;
+import net.wurstclient.hacks.chestesp.ChestEspRenderer;
+import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
 import com.google.common.collect.Maps;
@@ -53,7 +59,6 @@ import net.minecraft.block.AbstractSignBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.ChestBlock;
-import net.minecraft.block.Material;
 import net.minecraft.block.PressurePlateBlock;
 import net.minecraft.block.TripwireBlock;
 import net.minecraft.block.entity.BarrelBlockEntity;
@@ -66,7 +71,6 @@ import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gl.VertexBuffer;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.client.render.GameRenderer;
-import net.minecraft.client.render.Shader;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
@@ -79,10 +83,8 @@ import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Vec3i;
-import net.minecraft.util.registry.Registry;
 import net.wurstclient.SearchTags;
 import net.wurstclient.WurstClient;
 import net.wurstclient.ai.PathFinder;
@@ -348,18 +350,26 @@ public class WarehouseCmd extends Command {
 			@SuppressWarnings("deprecation")
 			private boolean canGoThrough(BlockPos pos) {
 				// check if loaded
-				if (!WurstClient.MC.world.isChunkLoaded(pos)) return false;
+				// Can't see why isChunkLoaded() is deprecated. Still seems to be widely
+				// used with no replacement.
+				if(!WurstClient.MC.world.isChunkLoaded(pos))
+					return false;
 
 				// check if solid
-				Material	material	= BlockUtils.getState(pos).getMaterial();
-				Block		block		= BlockUtils.getBlock(pos);
-				if (material.blocksMovement() && !(block instanceof AbstractSignBlock)) return false;
+				BlockState state = BlockUtils.getState(pos);
+				Block block = state.getBlock();
+				if(state.blocksMovement() && !(block instanceof AbstractSignBlock))
+					return false;
 
 				// check if trapped
-				if (block instanceof TripwireBlock || block instanceof PressurePlateBlock) return false;
+				if(block instanceof TripwireBlock
+					|| block instanceof PressurePlateBlock)
+					return false;
 
 				// check if safe
-				if (!invulnerable && (material == Material.LAVA || material == Material.FIRE)) return false;
+				if(!invulnerable
+					&& (block == Blocks.LAVA || block instanceof AbstractFireBlock))
+					return false;
 
 				return true;
 			}
@@ -674,7 +684,7 @@ public class WarehouseCmd extends Command {
 				}
 
 				int		empty	= Math.max(0, item.getMaxCount() - item.getCount());
-				String	name	= Registry.ITEM.getId(item.getItem()).toString();
+				String	name	= item.getItem().toString();
 				itemList.compute(name, (name0, count) -> count == null ? empty : (count + empty));
 
 			}
@@ -684,7 +694,7 @@ public class WarehouseCmd extends Command {
 
 				final int								EmptyCount			= emptyCount;
 				BiFunction<String, Integer, Integer>	addEmptyFunction	= (name, count) ->		//
-				Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * EmptyCount + count;
+				Registries.ITEM.get(Identifier.tryParse(name)).getMaxCount() * EmptyCount + count;
 
 				for (String name : itemList.keySet().toArray(String[]::new)) itemList.compute(name, addEmptyFunction);
 
@@ -694,7 +704,7 @@ public class WarehouseCmd extends Command {
 		}
 
 		public void add(ItemStack itemStack) {
-			String	name	= Registry.ITEM.getId(itemStack.getItem()).toString();
+			String	name	= itemStack.getItem().toString();
 			int		amount	= itemStack.getCount();
 			compute(name, (ignore, old) -> old == null ? amount : (amount + old));
 		}
@@ -710,8 +720,7 @@ public class WarehouseCmd extends Command {
 
 			return inv.main.stream()//
 					.map(ItemStack::getItem)//
-					.map(Registry.ITEM::getId)//
-					.map(Identifier::toString)//
+					.map(Item::toString)//
 					.map(this::get)//
 					.anyMatch(count -> count != null && count > 0)//
 			;
@@ -727,8 +736,7 @@ public class WarehouseCmd extends Command {
 		public boolean hasCanOutput(PlayerInventory inv, ItemList cache) {
 			Stream<String> stream = inv.main.stream()//
 					.map(ItemStack::getItem)//
-					.map(Registry.ITEM::getId)//
-					.map(Identifier::toString)//
+				    .map(Item::toString)//
 			;
 
 			if (cache != null) stream = stream.filter(name -> Objects.requireNonNullElse(cache.get(name), 0) > 0);
@@ -892,7 +900,7 @@ public class WarehouseCmd extends Command {
 			int			regionX	= (camPos.getX() >> 9) * 512;
 			int			regionZ	= (camPos.getZ() >> 9) * 512;
 
-			RenderSystem.setShader(GameRenderer::getPositionShader);
+			RenderSystem.setShader(GameRenderer::getPositionProgram);
 			renderBoxes(matrixStack, SEE_COLOR.getColorF(), regionX, regionZ, lookingBox);
 
 			matrixStack.pop();
@@ -997,7 +1005,7 @@ public class WarehouseCmd extends Command {
 					return name -> configAmount;
 				} else {
 					// group amount
-					return name -> Registry.ITEM.get(Identifier.tryParse(name)).getMaxCount() * -configAmount;
+					return name -> Registries.ITEM.get(Identifier.tryParse(name)).getMaxCount() * -configAmount;
 				}
 			case COUNT_LIST:
 				// keep original amount
@@ -1374,7 +1382,7 @@ public class WarehouseCmd extends Command {
 			int			regionX	= (camPos.getX() >> 9) * 512;
 			int			regionZ	= (camPos.getZ() >> 9) * 512;
 
-			RenderSystem.setShader(GameRenderer::getPositionShader);
+			RenderSystem.setShader(GameRenderer::getPositionProgram);
 			renderBoxes(matrixStack, GOAL_COLOR.getColorF(), regionX, regionZ, goalBox);
 
 			matrixStack.pop();
@@ -1667,7 +1675,7 @@ public class WarehouseCmd extends Command {
 				ItemStack item = itemList[i];
 				if (item == null || item.isEmpty()) continue;
 
-				String	name	= Registry.ITEM.getId(item.getItem()).toString();
+				String	name	= item.getItem().toString();
 				Integer	amount	= takeList.get(name);
 				if (amount == null || amount <= 0) continue;
 
@@ -1755,7 +1763,7 @@ public class WarehouseCmd extends Command {
 				ItemStack item = inventory.main.get(i);
 				if (item == null || item.isEmpty()) continue;
 
-				String	name	= Registry.ITEM.getId(item.getItem()).toString();
+				String	name	= item.getItem().toString();
 				Integer	amount	= putList.get(name);
 				if (amount == null || amount <= 0) continue;
 
@@ -1927,7 +1935,7 @@ public class WarehouseCmd extends Command {
 			int			regionX	= (camPos.getX() >> 9) * 512;
 			int			regionZ	= (camPos.getZ() >> 9) * 512;
 
-			RenderSystem.setShader(GameRenderer::getPositionShader);
+			RenderSystem.setShader(GameRenderer::getPositionProgram);
 			for (ContaionerType ct : ContaionerType.BY_ID) {
 
 				renderBoxes(matrixStack, ct.colorSetting.getColorF(), regionX, regionZ, chests.get(ct));
@@ -2121,7 +2129,7 @@ public class WarehouseCmd extends Command {
 			int			regionX	= (camPos.getX() >> 9) * 512;
 			int			regionZ	= (camPos.getZ() >> 9) * 512;
 
-			RenderSystem.setShader(GameRenderer::getPositionShader);
+			RenderSystem.setShader(GameRenderer::getPositionProgram);
 			renderBoxes(matrixStack, RULE_COLOR.getColorF(), regionX, regionZ, renderBoxsConf);
 			renderBoxes(matrixStack, CACHE_COLOR.getColorF(), regionX, regionZ, renderBoxsCache);
 
@@ -2148,7 +2156,7 @@ public class WarehouseCmd extends Command {
 
 			if (itemStack.isEmpty()) return;
 
-			var	name			= Registry.ITEM.getId(itemStack.getItem()).toString();
+			var	name			= itemStack.getItem().toString();
 			var	containerCache	= WarehouseCmd.containerCache;
 
 			if (containerCache != null) {
@@ -2289,49 +2297,34 @@ public class WarehouseCmd extends Command {
 	}
 
 	private static void renderBoxes(MatrixStack matrixStack, float[] colorF, int regionX, int regionZ, ArrayList<Box> boxes) {
-
 		for (Box box : boxes) {
-			matrixStack.push();
-
-			matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
-
-			matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
-
-			RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
-
-			Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
-			Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
-			Shader		shader		= RenderSystem.getShader();
-			solidBox.draw(viewMatrix, projMatrix, shader);
-
-			RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
-			outlinedBox.draw(viewMatrix, projMatrix, shader);
-
-			matrixStack.pop();
-
+			renderBoxes(matrixStack, colorF, regionX, regionZ, box);
 		}
 	}
 
 	private static void renderBoxes(MatrixStack matrixStack, float[] colorF, int regionX, int regionZ, Box box) {
-
 		matrixStack.push();
 
 		matrixStack.translate(box.minX - regionX, box.minY, box.minZ - regionZ);
 
-		matrixStack.scale((float) (box.maxX - box.minX), (float) (box.maxY - box.minY), (float) (box.maxZ - box.minZ));
+		matrixStack.scale((float)(box.maxX - box.minX),
+			(float)(box.maxY - box.minY), (float)(box.maxZ - box.minZ));
+
+		Matrix4f viewMatrix = matrixStack.peek().getPositionMatrix();
+		Matrix4f projMatrix = RenderSystem.getProjectionMatrix();
+		ShaderProgram shader = RenderSystem.getShader();
 
 		RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.25F);
-
-		Matrix4f	viewMatrix	= matrixStack.peek().getPositionMatrix();
-		Matrix4f	projMatrix	= RenderSystem.getProjectionMatrix();
-		Shader		shader		= RenderSystem.getShader();
+		solidBox.bind();
 		solidBox.draw(viewMatrix, projMatrix, shader);
+		VertexBuffer.unbind();
 
 		RenderSystem.setShaderColor(colorF[0], colorF[1], colorF[2], 0.5F);
+		outlinedBox.bind();
 		outlinedBox.draw(viewMatrix, projMatrix, shader);
+		VertexBuffer.unbind();
 
 		matrixStack.pop();
-
 	}
 
 	private static void renderInit() {
@@ -2341,8 +2334,8 @@ public class WarehouseCmd extends Command {
 
 			if (solidBox != null) return;
 
-			solidBox	= new VertexBuffer();
-			outlinedBox	= new VertexBuffer();
+			solidBox = new VertexBuffer(VertexBuffer.Usage.STATIC);
+			outlinedBox = new VertexBuffer(VertexBuffer.Usage.STATIC);
 
 			Box box = new Box(BlockPos.ORIGIN);
 			RenderUtils.drawSolidBox(box, solidBox);

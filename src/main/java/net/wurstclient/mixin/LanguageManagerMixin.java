@@ -25,6 +25,7 @@ public abstract class LanguageManagerMixin
 	implements SynchronousResourceReloader, ILanguageManager
 {
 	private TranslationStorage wurstEnglish;
+	private TranslationStorage wurstChinese;
 	
 	@Inject(at = @At("HEAD"),
 		method = "reload(Lnet/minecraft/resource/ResourceManager;)V")
@@ -32,11 +33,19 @@ public abstract class LanguageManagerMixin
 	{
 		wurstEnglish = TranslationStorage.load(manager,
 			Lists.newArrayList("en_us"), false);
+		wurstChinese = TranslationStorage.load(manager,
+			Lists.newArrayList("zh_cn"), false);
 	}
 	
 	@Override
 	public TranslationStorage wurst_getEnglish()
 	{
 		return wurstEnglish;
+	}
+
+	@Override
+	public TranslationStorage wurst_getChinese()
+	{
+		return wurstChinese;
 	}
 }

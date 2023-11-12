@@ -31,19 +31,19 @@ public record BookOffer(String id, int level, int price)
 	
 	public String getEnchantmentName()
 	{
-		TranslationStorage english = ILanguageManager.getEnglish();
+		TranslationStorage chinese = ILanguageManager.getChinese();
 		Enchantment enchantment = getEnchantment();
-		return english.get(enchantment.getTranslationKey());
+		return chinese.get(enchantment.getTranslationKey());
 	}
 	
 	public String getEnchantmentNameWithLevel()
 	{
-		TranslationStorage english = ILanguageManager.getEnglish();
+		TranslationStorage chinese = ILanguageManager.getChinese();
 		Enchantment enchantment = getEnchantment();
-		String name = english.get(enchantment.getTranslationKey());
+		String name = chinese.get(enchantment.getTranslationKey());
 		
 		if(enchantment.getMaxLevel() > 1)
-			name += " " + english.get("enchantment.level." + level);
+			name += " " + chinese.get("enchantment.level." + level);
 		
 		return name;
 	}

@@ -13,10 +13,16 @@ import net.wurstclient.WurstClient;
 public interface ILanguageManager
 {
 	public TranslationStorage wurst_getEnglish();
-	
+	public TranslationStorage wurst_getChinese();
+
 	public static TranslationStorage getEnglish()
 	{
 		return ((ILanguageManager)WurstClient.MC.getLanguageManager())
 			.wurst_getEnglish();
+	}
+	public static TranslationStorage getChinese()
+	{
+		return ((ILanguageManager)WurstClient.MC.getLanguageManager())
+			.wurst_getChinese();
 	}
 }
